@@ -46,12 +46,12 @@ pipeline {
     
     post {
         success {
-            mail to: 'l.kieran95@gmail.com',
+            mail to: 'xxx@gmail.com',
                 subject: "Success - ${env.JOB_NAME} #${env.BUILD_NUMBER}",
                 body: "Upgrade done.\n\nVoir: ${env.BUILD_URL}"
         }
         failure {
-            mail to: 'l.kieran95@gmail.com',
+            mail to: 'xxx@gmail.com',
                 subject: "Issue - ${env.JOB_NAME} #${env.BUILD_NUMBER}",
                 body: "Upgrade issue.\n\nVoir les logs: ${env.BUILD_URL}console"
         }
