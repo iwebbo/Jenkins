@@ -1,0 +1,150 @@
+pipeline {
+    agent any
+    
+    environment {
+        // Variables d'environnement Ansible
+        ANSIBLE_HOST_KEY_CHECKING = 'False'
+        ANSIBLE_FORKS = '2'  // Optimisé pour Raspberry Pi
+        ANSIBLE_CONFIG = '/tmp/ansibleJenkins/ansible/ansible.cfg'
+    }
+    
+    parameters {
+        choice(
+            name: 'PLAYBOOK_ACTION',
+            choices: ['install', 'manage'],
+            description: 'Action à effectuer sur Docker'
+        )
+        choice(
+            name: 'TARGET_SERVER',
+            choices: [
+                'Windows',
+                'ServerVM1', 
+                'RaspberryPi2',
+                'ReverseProxy',
+                'Linux'
+            ],
+            description: 'Serveur cible pour le déploiement'
+        )
+        text(
+            name: 'DOCKER_MANAGEMENT_VARS',
+            defaultValue: '',
+            description: '''⚠️ Variables pour la gestion Docker (UNIQUEMENT si action = manage):
+Format key=value séparées par des espaces:
+container_name=mon-container image_name=nginx:latest action=start ports=80:80,443:443
+⚠️ Ce champ sera ignoré pour l'action "install"'''
+        )
+    }
+    
+    stages {
+        stage('Validation des paramètres') {
+            steps {
+                script {
+                    echo "Action sélectionnée: ${params.PLAYBOOK_ACTION}"
+                    echo "Serveur cible: ${params.TARGET_SERVER}"
+                    
+                    // Déterminer le type de serveur
+                    def isWindows = params.TARGET_SERVER.toLowerCase().contains('windows')
+                    def serverType = isWindows ? 'Windows' : 'Linux'
+                    echo "Type de serveur détecté: ${serverType}"
+                    
+                    // Déterminer le playbook selon l'action ET le type de serveur
+                    def selectedPlaybook = ""
+                    if (params.PLAYBOOK_ACTION == 'install') {
+                        selectedPlaybook = isWindows ? 'deploy_docker_windows.yml' : 'deploy_docker_linux.yml'
+                    } else { // manage
+                        selectedPlaybook = isWindows ? 'deploy_docker_container_windows.yml' : 'deploy_docker_container_linux.yml'
+                    }
+                    
+                    // Stocker le playbook sélectionné
+                    env.SELECTED_PLAYBOOK = selectedPlaybook
+                    echo "Playbook sélectionné: ${env.SELECTED_PLAYBOOK}"
+                    
+                    // Validation pour l'action manage
+                    if (params.PLAYBOOK_ACTION == 'manage') {
+                        if (params.DOCKER_MANAGEMENT_VARS.trim() == '') {
+                            error("Les variables de gestion Docker sont obligatoires pour l'action 'manage'")
+                        }
+                        echo "Variables Docker fournies:"
+                        echo "${params.DOCKER_MANAGEMENT_VARS}"
+                        
+                        // Stocker les variables formatées
+                        env.DOCKER_EXTRA_VARS = params.DOCKER_MANAGEMENT_VARS.replaceAll('\n', ' ').replaceAll('\r', '').trim()
+                    } else {
+                        echo "Action 'install' - aucune variable supplémentaire requise"
+                        if (params.DOCKER_MANAGEMENT_VARS.trim() != '') {
+                            echo "⚠️ Les variables Docker sont ignorées pour l'action 'install'"
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Vérification Ansible') {
+            steps {
+                script {
+                    // Vérifier qu'Ansible est installé
+                    sh 'ansible --version'
+                    
+                    // Vérifier la syntaxe du playbook
+                    sh "ansible-playbook --syntax-check -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini /tmp/ansibleJenkins/ansible/playbook/${SELECTED_PLAYBOOK} -e HOST=${TARGET_SERVER}"
+                }
+            }
+        }
+        
+        stage('Préparation des variables') {
+            when {
+                expression { params.PLAYBOOK_ACTION == 'manage' }
+            }
+            steps {
+                script {
+                    // Transformer les variables en format key=value pour --extra-vars
+                    if (params.DOCKER_MANAGEMENT_VARS.trim() != '') {
+                        echo "Variables Docker fournies:"
+                        echo "${params.DOCKER_MANAGEMENT_VARS}"
+                        
+                        // Stocker les variables dans une variable d'environnement
+                        env.DOCKER_EXTRA_VARS = params.DOCKER_MANAGEMENT_VARS.replaceAll('\n', ' ').replaceAll('\r', '').trim()
+                        echo "Variables formatées: ${env.DOCKER_EXTRA_VARS}"
+                    } else {
+                        error("Variables Docker obligatoires pour l'action 'manage'")
+                    }
+                }
+            }
+        }
+        
+        stage('Exécution du Playbook Docker') {
+            steps {
+                script {
+                    withCredentials([file(credentialsId: 'ssh-key-ansible-user-secret-file', variable: 'SSH_PRIVATE_KEY_FILE')]) {
+                        sh """
+                            # Construire la commande ansible-playbook de base
+                            ANSIBLE_CMD="ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini /tmp/ansibleJenkins/ansible/playbook/${SELECTED_PLAYBOOK} -e HOST=${TARGET_SERVER}"
+                            
+                            # Ajouter les variables directement pour la gestion
+                            if [ "${params.PLAYBOOK_ACTION}" = "manage" ] && [ -n "${env.DOCKER_EXTRA_VARS}" ]; then
+                                ANSIBLE_CMD="\$ANSIBLE_CMD --extra-vars '${env.DOCKER_EXTRA_VARS}'"
+                            fi
+                            
+                            # Exécuter la commande
+                            echo "Commande exécutée: \$ANSIBLE_CMD"
+                            eval \$ANSIBLE_CMD
+                        """
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        success {
+            mail to: 'l.kieran95@gmail.com',
+                subject: "Success - ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                body: "Upgrade done.\n\nVoir: ${env.BUILD_URL}"
+        }
+        failure {
+            mail to: 'l.kieran95@gmail.com',
+                subject: "Issue - ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                body: "Upgrade issue.\n\nVoir les logs: ${env.BUILD_URL}console"
+        }
+    }
+}

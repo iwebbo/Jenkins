@@ -1,0 +1,346 @@
+@Library('shared-library') _
+
+// Script Groovy pour scanner les rôles dynamiquement
+def getRolesFromDirectory(rolesPath, excludeList = []) {
+    def roles = [:]
+    roles.linux = []
+    roles.windows = []
+    roles.universal = []
+    roles.unknown = []
+    
+    try {
+        def rolesDir = new File(rolesPath)
+        if (!rolesDir.exists()) {
+            echo "⚠️ Le répertoire ${rolesPath} n'existe pas"
+            return [:]
+        }
+        
+        rolesDir.listFiles().each { roleDir ->
+            if (roleDir.isDirectory()) {
+                def roleName = roleDir.name
+                
+                // Exclure les rôles non désirés
+                if (excludeList.contains(roleName)) {
+                    echo "⏭️ Exclusion du rôle: ${roleName}"
+                    return
+                }
+                
+                // Analyser le type d'OS du rôle
+                def osType = analyzeRoleOSType(roleDir)
+                def roleInfo = [
+                    name: roleName,
+                    path: roleDir.absolutePath,
+                    description: getRoleDescription(roleDir)
+                ]
+                
+                roles[osType] << roleInfo
+                echo "📦 Rôle détecté: ${roleName} (${osType})"
+            }
+        }
+    } catch (Exception e) {
+        echo "❌ Erreur lors du scan des rôles: ${e.getMessage()}"
+    }
+    
+    return roles
+}
+
+def analyzeRoleOSType(roleDir) {
+    def roleName = roleDir.name.toLowerCase()
+    
+    // Mots-clés Windows
+    def windowsKeywords = ['windows', 'win', 'iis', 'powershell', 'chocolatey', 'mssql', 'dotnet', 'sharepoint']
+    // Mots-clés Linux
+    def linuxKeywords = ['linux', 'ubuntu', 'centos', 'debian', 'rhel', 'apache', 'nginx', 'mysql', 'postgresql']
+    // Mots-clés Universal
+    def universalKeywords = ['common', 'base', 'general', 'universal', 'monitoring', 'backup']
+    
+    // Analyser le nom du rôle
+    if (windowsKeywords.any { keyword -> roleName.contains(keyword) }) {
+        return 'windows'
+    }
+    if (linuxKeywords.any { keyword -> roleName.contains(keyword) }) {
+        return 'linux'
+    }
+    if (universalKeywords.any { keyword -> roleName.contains(keyword) }) {
+        return 'universal'
+    }
+    
+    // Analyser le contenu des fichiers
+    def tasksFile = new File(roleDir, 'tasks/main.yml')
+    if (tasksFile.exists()) {
+        try {
+            def content = tasksFile.text.toLowerCase()
+            if (content.contains('win_') || content.contains('powershell') || content.contains('chocolatey')) {
+                return 'windows'
+            }
+            if (content.contains('apt:') || content.contains('yum:') || content.contains('systemd:')) {
+                return 'linux'
+            }
+        } catch (Exception e) {
+            // Ignorer les erreurs de lecture
+        }
+    }
+    
+    return 'unknown'
+}
+
+def getRoleDescription(roleDir) {
+    def metaFile = new File(roleDir, 'meta/main.yml')
+    if (metaFile.exists()) {
+        try {
+            def metaContent = readYaml file: metaFile.absolutePath
+            return metaContent?.galaxy_info?.description ?: "Aucune description"
+        } catch (Exception e) {
+            // Ignorer les erreurs de lecture YAML
+        }
+    }
+    
+    def readmeFile = new File(roleDir, 'README.md')
+    if (readmeFile.exists()) {
+        try {
+            def lines = readmeFile.readLines()
+            if (lines.size() > 0) {
+                return lines[0].replaceAll('^#+\\s*', '').take(100)
+            }
+        } catch (Exception e) {
+            // Ignorer les erreurs de lecture
+        }
+    }
+    
+    return "Rôle ${roleDir.name}"
+}
+
+def buildRoleChoices(roles, osFilter = 'all') {
+    def choices = []
+    
+    switch(osFilter) {
+        case 'linux':
+            choices.addAll(roles.linux.collect { "${it.name} (Linux)" })
+            choices.addAll(roles.universal.collect { "${it.name} (Universal)" })
+            break
+        case 'windows':
+            choices.addAll(roles.windows.collect { "${it.name} (Windows)" })
+            choices.addAll(roles.universal.collect { "${it.name} (Universal)" })
+            break
+        case 'all':
+        default:
+            choices.addAll(roles.linux.collect { "${it.name} (Linux)" })
+            choices.addAll(roles.windows.collect { "${it.name} (Windows)" })
+            choices.addAll(roles.universal.collect { "${it.name} (Universal)" })
+            if (roles.unknown.size() > 0) {
+                choices.addAll(roles.unknown.collect { "${it.name} (Unknown)" })
+            }
+            break
+    }
+    
+    if (choices.isEmpty()) {
+        choices = ['Aucun rôle trouvé']
+    }
+    
+    return choices
+}
+
+pipeline {
+    agent any
+    
+    environment {
+        ANSIBLE_HOST_KEY_CHECKING = 'False'
+        ANSIBLE_FORKS = '2'
+        ROLES_PATH = '/tmp/ansibleJenkins/ansible/roles'
+    }
+    
+    parameters {
+        choice(
+            name: 'ACTION',
+            choices: ['install', 'update', 'delete'],
+            description: 'Action à effectuer sur le rôle'
+        )
+        choice(
+            name: 'OS_FILTER',
+            choices: ['all', 'linux', 'windows'],
+            description: 'Filtrer les rôles par OS'
+        )
+        choice(
+            name: 'TARGET_SERVER',
+            choices: [
+                'ServerVM1',
+                'ServerVM2', 
+                'ReverseProxy',
+                'Windows-Server1',
+                'Windows-Server2',
+                'all-linux',
+                'all-windows',
+                'all-servers'
+            ],
+            description: 'Serveur cible pour le déploiement'
+        )
+        text(
+            name: 'EXTRA_VARS',
+            defaultValue: '',
+            description: 'Variables supplémentaires (format: key=value)'
+        )
+        string(
+            name: 'EXCLUDE_ROLES',
+            defaultValue: 'test,example,deprecated,backup',
+            description: 'Rôles à exclure (séparés par des virgules)'
+        )
+    }
+    
+    stages {
+        stage('Scan et Sélection des Rôles') {
+            steps {
+                script {
+                    echo "🔍 Scanning roles from ${env.ROLES_PATH}..."
+                    
+                    // Convertir les exclusions en liste
+                    def excludeList = params.EXCLUDE_ROLES.split(',').collect { it.trim() }
+                    
+                    // Scanner les rôles
+                    def roles = getRolesFromDirectory(env.ROLES_PATH, excludeList)
+                    
+                    // Afficher le résumé
+                    echo "📊 Résultats du scan:"
+                    echo "🐧 Rôles Linux: ${roles.linux.size()}"
+                    echo "🪟 Rôles Windows: ${roles.windows.size()}"
+                    echo "🌐 Rôles Universels: ${roles.universal.size()}"
+                    echo "❓ Rôles Non-classés: ${roles.unknown.size()}"
+                    
+                    // Construire les choix selon le filtre
+                    def availableRoles = buildRoleChoices(roles, params.OS_FILTER)
+                    
+                    // Sélection interactive du rôle
+                    if (availableRoles[0] != 'Aucun rôle trouvé') {
+                        env.SELECTED_ROLE_FULL = input(
+                            message: "Sélectionnez le rôle à ${params.ACTION}",
+                            parameters: [
+                                choice(
+                                    name: 'ANSIBLE_ROLE',
+                                    choices: availableRoles,
+                                    description: "Rôles disponibles pour ${params.OS_FILTER}"
+                                )
+                            ]
+                        )
+                        
+                        // Extraire le nom du rôle (sans le suffixe OS)
+                        env.SELECTED_ROLE = env.SELECTED_ROLE_FULL.replaceAll(/ \(.*\)$/, '')
+                        
+                        echo "✅ Rôle sélectionné: ${env.SELECTED_ROLE}"
+                    } else {
+                        error("❌ Aucun rôle trouvé pour le filtre '${params.OS_FILTER}'")
+                    }
+                }
+            }
+        }
+        
+        stage('Validation') {
+            steps {
+                script {
+                    echo "Action: ${params.ACTION}"
+                    echo "Rôle: ${env.SELECTED_ROLE}"
+                    echo "Serveur: ${params.TARGET_SERVER}"
+                    echo "Filtre OS: ${params.OS_FILTER}"
+                    
+                    // Déterminer le playbook selon l'action
+                    def playbooks = [
+                        'install': 'role_install.yml',
+                        'update': 'role_update.yml', 
+                        'delete': 'role_delete.yml'
+                    ]
+                    
+                    env.SELECTED_PLAYBOOK = playbooks[params.ACTION]
+                    echo "Playbook: ${env.SELECTED_PLAYBOOK}"
+                }
+            }
+        }
+        
+        stage('Exécution du Rôle') {
+            steps {
+                script {
+                    withCredentials([file(credentialsId: 'ansible-ssh-key-file', variable: 'SSH_PRIVATE_KEY_FILE')]) {
+                        sh """
+                            chmod 600 \$SSH_PRIVATE_KEY_FILE
+                            
+                            # Variables pour le playbook
+                            EXTRA_VARS="target_role=${env.SELECTED_ROLE} action=${params.ACTION}"
+                            if [ -n "${params.EXTRA_VARS}" ]; then
+                                EXTRA_VARS="\$EXTRA_VARS ${params.EXTRA_VARS}"
+                            fi
+                            
+                            echo "🚀 Exécution du rôle ${env.SELECTED_ROLE}..."
+                            
+                            ansible-playbook \\
+                                -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \\
+                                /tmp/ansibleJenkins/ansible/playbook/${env.SELECTED_PLAYBOOK} \\
+                                --private-key=\$SSH_PRIVATE_KEY_FILE \\
+                                --user=ansible \\
+                                --limit=${params.TARGET_SERVER} \\
+                                --extra-vars="\$EXTRA_VARS" \\
+                                --verbose
+                        """
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            echo "🎭 Gestion des rôles Ansible terminée"
+            
+            // Créer un rapport
+            script {
+                def report = """
+Rapport d'Exécution Ansible Role
+================================
+Action: ${params.ACTION}
+Rôle: ${env.SELECTED_ROLE ?: 'Non sélectionné'}
+Serveur: ${params.TARGET_SERVER}
+Filtre OS: ${params.OS_FILTER}
+Playbook: ${env.SELECTED_PLAYBOOK ?: 'Non défini'}
+Build: #${env.BUILD_NUMBER}
+Date: ${new Date().toString()}
+"""
+                writeFile file: 'ansible_role_report.txt', text: report
+                archiveArtifacts artifacts: 'ansible_role_report.txt', allowEmptyArchive: true
+            }
+        }
+        success {
+            echo "✅ Rôle '${env.SELECTED_ROLE}' ${params.ACTION} avec succès!"
+            
+            emailext (
+                subject: "✅ [Jenkins] Ansible Role ${params.ACTION} - ${env.SELECTED_ROLE}",
+                body: """
+                <h2>✅ Rôle Ansible exécuté avec succès</h2>
+                <p><strong>Action:</strong> ${params.ACTION}</p>
+                <p><strong>Rôle:</strong> ${env.SELECTED_ROLE}</p>
+                <p><strong>Serveur:</strong> ${params.TARGET_SERVER}</p>
+                <p><strong>Filtre OS:</strong> ${params.OS_FILTER}</p>
+                <p><strong>Build:</strong> #${env.BUILD_NUMBER}</p>
+                
+                <p><a href="${env.BUILD_URL}">Voir les détails du build</a></p>
+                """,
+                mimeType: 'text/html',
+                to: 'votre-email@example.com'
+            )
+        }
+        failure {
+            echo "❌ Échec de l'exécution du rôle"
+            
+            emailext (
+                subject: "❌ [Jenkins] Ansible Role - Échec - ${env.SELECTED_ROLE ?: 'Unknown'}",
+                body: """
+                <h2>❌ Échec de l'exécution du rôle Ansible</h2>
+                <p><strong>Action:</strong> ${params.ACTION}</p>
+                <p><strong>Rôle:</strong> ${env.SELECTED_ROLE ?: 'Non sélectionné'}</p>
+                <p><a href="${env.BUILD_URL}console">Voir les logs</a></p>
+                """,
+                mimeType: 'text/html',
+                to: 'votre-email@example.com',
+                attachLog: true
+            )
+        }
+        cleanup {
+            cleanWs()
+        }
+    }
+}
