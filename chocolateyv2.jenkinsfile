@@ -19,11 +19,6 @@ pipeline {
             ],
             description: 'Serveur cible pour le déploiement'
         )
-        choice(
-            name: 'PACKAGE_ACTION',
-            choices: ['install', 'uninstall', 'upgrade'],
-            description: 'Action à effectuer sur le package Chocolatey'
-        )
         string(
             name: 'PACKAGE_NAME',
             defaultValue: '',
@@ -231,7 +226,7 @@ post {
                 Build: #${env.BUILD_NUMBER}
                 Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
 
-                📊 Détails du build: ${env.BUILD_URL}
+                Détails du build: ${env.BUILD_URL}
 
                 Configuration utilisée:
                 - Force Installation: ${params.FORCE_INSTALL}
@@ -240,7 +235,7 @@ post {
                 - Paramètres Package: ${params.PACKAGE_PARAMS ?: 'Aucun'}
                 - Variables Extra: ${params.EXTRA_VARS ?: 'Aucune'}
 
-                ✅ L'opération s'est terminée avec succès.
+                L'opération s'est terminée avec succès.
             """
             
             mail to: 'l.kieran95@gmail.com',
@@ -256,7 +251,7 @@ post {
             
             // Créer le corps de l'email d'échec
             def emailBody = """
-                ❌ CHOCOLATEY PACKAGE - ÉCHEC
+                CHOCOLATEY PACKAGE - ÉCHEC
 
                 Package: ${params.PACKAGE_NAME}
                 Version: ${params.PACKAGE_VERSION ?: 'Latest'}
@@ -265,7 +260,7 @@ post {
                 Build: #${env.BUILD_NUMBER}
                 Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
 
-                🔍 Logs d'erreur: ${env.BUILD_URL}console
+                Logs d'erreur: ${env.BUILD_URL}console
 
                 Configuration utilisée:
                 - Force Installation: ${params.FORCE_INSTALL}
@@ -277,7 +272,7 @@ post {
                 Variables Ansible générées:
                 ${env.ANSIBLE_EXTRA_VARS ?: 'Non générées'}
 
-                ⚠️ Veuillez vérifier les logs pour plus de détails.
+                Veuillez vérifier les logs pour plus de détails.
             """
             
             mail to: 'l.kieran95@gmail.com',
@@ -288,5 +283,5 @@ post {
     cleanup {
         cleanWs()
     }
-}
+  }
 }
