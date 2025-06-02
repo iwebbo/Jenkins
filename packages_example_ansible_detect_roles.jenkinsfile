@@ -1,145 +1,3 @@
-@Library('shared-library') _
-
-// Script Groovy pour scanner les rôles dynamiquement
-def getRolesFromDirectory(rolesPath, excludeList = []) {
-    def roles = [:]
-    roles.linux = []
-    roles.windows = []
-    roles.universal = []
-    roles.unknown = []
-    
-    try {
-        def rolesDir = new File(rolesPath)
-        if (!rolesDir.exists()) {
-            echo "⚠️ Le répertoire ${rolesPath} n'existe pas"
-            return [:]
-        }
-        
-        rolesDir.listFiles().each { roleDir ->
-            if (roleDir.isDirectory()) {
-                def roleName = roleDir.name
-                
-                // Exclure les rôles non désirés
-                if (excludeList.contains(roleName)) {
-                    echo "⏭️ Exclusion du rôle: ${roleName}"
-                    return
-                }
-                
-                // Analyser le type d'OS du rôle
-                def osType = analyzeRoleOSType(roleDir)
-                def roleInfo = [
-                    name: roleName,
-                    path: roleDir.absolutePath,
-                    description: getRoleDescription(roleDir)
-                ]
-                
-                roles[osType] << roleInfo
-                echo "📦 Rôle détecté: ${roleName} (${osType})"
-            }
-        }
-    } catch (Exception e) {
-        echo "❌ Erreur lors du scan des rôles: ${e.getMessage()}"
-    }
-    
-    return roles
-}
-
-def analyzeRoleOSType(roleDir) {
-    def roleName = roleDir.name.toLowerCase()
-    
-    // Mots-clés Windows
-    def windowsKeywords = ['windows', 'win', 'iis', 'powershell', 'chocolatey', 'mssql', 'dotnet', 'sharepoint']
-    // Mots-clés Linux
-    def linuxKeywords = ['linux', 'ubuntu', 'centos', 'debian', 'rhel', 'apache', 'nginx', 'mysql', 'postgresql']
-    // Mots-clés Universal
-    def universalKeywords = ['common', 'base', 'general', 'universal', 'monitoring', 'backup']
-    
-    // Analyser le nom du rôle
-    if (windowsKeywords.any { keyword -> roleName.contains(keyword) }) {
-        return 'windows'
-    }
-    if (linuxKeywords.any { keyword -> roleName.contains(keyword) }) {
-        return 'linux'
-    }
-    if (universalKeywords.any { keyword -> roleName.contains(keyword) }) {
-        return 'universal'
-    }
-    
-    // Analyser le contenu des fichiers
-    def tasksFile = new File(roleDir, 'tasks/main.yml')
-    if (tasksFile.exists()) {
-        try {
-            def content = tasksFile.text.toLowerCase()
-            if (content.contains('win_') || content.contains('powershell') || content.contains('chocolatey')) {
-                return 'windows'
-            }
-            if (content.contains('apt:') || content.contains('yum:') || content.contains('systemd:')) {
-                return 'linux'
-            }
-        } catch (Exception e) {
-            // Ignorer les erreurs de lecture
-        }
-    }
-    
-    return 'unknown'
-}
-
-def getRoleDescription(roleDir) {
-    def metaFile = new File(roleDir, 'meta/main.yml')
-    if (metaFile.exists()) {
-        try {
-            def metaContent = readYaml file: metaFile.absolutePath
-            return metaContent?.galaxy_info?.description ?: "Aucune description"
-        } catch (Exception e) {
-            // Ignorer les erreurs de lecture YAML
-        }
-    }
-    
-    def readmeFile = new File(roleDir, 'README.md')
-    if (readmeFile.exists()) {
-        try {
-            def lines = readmeFile.readLines()
-            if (lines.size() > 0) {
-                return lines[0].replaceAll('^#+\\s*', '').take(100)
-            }
-        } catch (Exception e) {
-            // Ignorer les erreurs de lecture
-        }
-    }
-    
-    return "Rôle ${roleDir.name}"
-}
-
-def buildRoleChoices(roles, osFilter = 'all') {
-    def choices = []
-    
-    switch(osFilter) {
-        case 'linux':
-            choices.addAll(roles.linux.collect { "${it.name} (Linux)" })
-            choices.addAll(roles.universal.collect { "${it.name} (Universal)" })
-            break
-        case 'windows':
-            choices.addAll(roles.windows.collect { "${it.name} (Windows)" })
-            choices.addAll(roles.universal.collect { "${it.name} (Universal)" })
-            break
-        case 'all':
-        default:
-            choices.addAll(roles.linux.collect { "${it.name} (Linux)" })
-            choices.addAll(roles.windows.collect { "${it.name} (Windows)" })
-            choices.addAll(roles.universal.collect { "${it.name} (Universal)" })
-            if (roles.unknown.size() > 0) {
-                choices.addAll(roles.unknown.collect { "${it.name} (Unknown)" })
-            }
-            break
-    }
-    
-    if (choices.isEmpty()) {
-        choices = ['Aucun rôle trouvé']
-    }
-    
-    return choices
-}
-
 pipeline {
     agent any
     
@@ -150,16 +8,6 @@ pipeline {
     }
     
     parameters {
-        choice(
-            name: 'ACTION',
-            choices: ['install', 'update', 'delete'],
-            description: 'Action à effectuer sur le rôle'
-        )
-        choice(
-            name: 'OS_FILTER',
-            choices: ['all', 'linux', 'windows'],
-            description: 'Filtrer les rôles par OS'
-        )
         choice(
             name: 'TARGET_SERVER',
             choices: [
@@ -174,109 +22,184 @@ pipeline {
             ],
             description: 'Serveur cible pour le déploiement'
         )
+        choice(
+            name: 'PACKAGE_ACTION',
+            choices: ['install', 'uninstall', 'upgrade'],
+            description: 'Action à effectuer sur le package Chocolatey'
+        )
+        string(
+            name: 'PACKAGE_NAME',
+            defaultValue: '',
+            description: '📦 Nom du package à installer/désinstaller (ex: googlechrome, firefox, git)'
+        )
+        string(
+            name: 'PACKAGE_VERSION',
+            defaultValue: '',
+            description: '🔢 Version spécifique du package (optionnel - laisser vide pour la dernière version)'
+        )
+        choice(
+            name: 'PACKAGE_STATE',
+            choices: ['present', 'absent', 'latest'],
+            description: '📋 État souhaité du package'
+        )
+        booleanParam(
+            name: 'FORCE_INSTALL',
+            defaultValue: false,
+            description: '⚡ Forcer l\'installation même si le package existe déjà'
+        )
+        string(
+            name: 'CHOCOLATEY_SOURCE',
+            defaultValue: 'https://chocolatey.org/api/v2/',
+            description: '🌐 Source Chocolatey (repository URL)'
+        )
+        choice(
+            name: 'CHOCOLATEY_TIMEOUT',
+            choices: ['1800', '3600', '7200', '10800'],
+            description: '⏱️ Timeout en secondes (1800=30min, 3600=1h, 7200=2h, 10800=3h)'
+        )
+        text(
+            name: 'PACKAGE_PARAMS',
+            defaultValue: '',
+            description: '⚙️ Paramètres supplémentaires pour l\'installation (ex: /InstallDir=C:\\MyApp /NoDesktopIcon)'
+        )
         text(
             name: 'EXTRA_VARS',
             defaultValue: '',
-            description: 'Variables supplémentaires (format: key=value)'
-        )
-        string(
-            name: 'EXCLUDE_ROLES',
-            defaultValue: 'test,example,deprecated,backup',
-            description: 'Rôles à exclure (séparés par des virgules)'
+            description: '🔧 Variables Ansible supplémentaires (format: key=value séparées par des espaces)'
         )
     }
     
     stages {
-        stage('Scan et Sélection des Rôles') {
+        stage('Validation des Paramètres') {
             steps {
                 script {
-                    echo "🔍 Scanning roles from ${env.ROLES_PATH}..."
+                    echo "🔍 Validation des paramètres Chocolatey..."
                     
-                    // Convertir les exclusions en liste
-                    def excludeList = params.EXCLUDE_ROLES.split(',').collect { it.trim() }
-                    
-                    // Scanner les rôles
-                    def roles = getRolesFromDirectory(env.ROLES_PATH, excludeList)
-                    
-                    // Afficher le résumé
-                    echo "📊 Résultats du scan:"
-                    echo "🐧 Rôles Linux: ${roles.linux.size()}"
-                    echo "🪟 Rôles Windows: ${roles.windows.size()}"
-                    echo "🌐 Rôles Universels: ${roles.universal.size()}"
-                    echo "❓ Rôles Non-classés: ${roles.unknown.size()}"
-                    
-                    // Construire les choix selon le filtre
-                    def availableRoles = buildRoleChoices(roles, params.OS_FILTER)
-                    
-                    // Sélection interactive du rôle
-                    if (availableRoles[0] != 'Aucun rôle trouvé') {
-                        env.SELECTED_ROLE_FULL = input(
-                            message: "Sélectionnez le rôle à ${params.ACTION}",
-                            parameters: [
-                                choice(
-                                    name: 'ANSIBLE_ROLE',
-                                    choices: availableRoles,
-                                    description: "Rôles disponibles pour ${params.OS_FILTER}"
-                                )
-                            ]
-                        )
-                        
-                        // Extraire le nom du rôle (sans le suffixe OS)
-                        env.SELECTED_ROLE = env.SELECTED_ROLE_FULL.replaceAll(/ \(.*\)$/, '')
-                        
-                        echo "✅ Rôle sélectionné: ${env.SELECTED_ROLE}"
-                    } else {
-                        error("❌ Aucun rôle trouvé pour le filtre '${params.OS_FILTER}'")
+                    // Validation du nom du package
+                    if (params.PACKAGE_NAME.trim() == '') {
+                        error("❌ Le nom du package est obligatoire!")
                     }
-                }
-            }
-        }
-        
-        stage('Validation') {
-            steps {
-                script {
-                    echo "Action: ${params.ACTION}"
-                    echo "Rôle: ${env.SELECTED_ROLE}"
-                    echo "Serveur: ${params.TARGET_SERVER}"
-                    echo "Filtre OS: ${params.OS_FILTER}"
                     
-                    // Déterminer le playbook selon l'action
-                    def playbooks = [
-                        'install': 'role_install.yml',
-                        'update': 'role_update.yml', 
-                        'delete': 'role_delete.yml'
+                    // Validation du serveur Windows
+                    if (!params.TARGET_SERVER.toLowerCase().contains('windows') && 
+                        !params.TARGET_SERVER.contains('all-windows') && 
+                        !params.TARGET_SERVER.contains('all-servers')) {
+                        echo "⚠️ Attention: Chocolatey ne fonctionne que sur Windows. Serveur sélectionné: ${params.TARGET_SERVER}"
+                    }
+                    
+                    // Mapper l'action vers l'état du package
+                    def stateMapping = [
+                        'install': 'present',
+                        'uninstall': 'absent', 
+                        'upgrade': 'latest'
                     ]
                     
-                    env.SELECTED_PLAYBOOK = playbooks[params.ACTION]
-                    echo "Playbook: ${env.SELECTED_PLAYBOOK}"
+                    // Utiliser le state mapping ou le paramètre PACKAGE_STATE
+                    env.FINAL_PACKAGE_STATE = stateMapping[params.PACKAGE_ACTION] ?: params.PACKAGE_STATE
+                    
+                    // Déterminer le playbook
+                    env.SELECTED_PLAYBOOK = 'chocolatey_package_manager.yml'
+                    
+                    echo "📊 Résumé des paramètres:"
+                    echo "   • Package: ${params.PACKAGE_NAME}"
+                    echo "   • Version: ${params.PACKAGE_VERSION ?: 'Latest'}"
+                    echo "   • Action: ${params.PACKAGE_ACTION}"
+                    echo "   • État final: ${env.FINAL_PACKAGE_STATE}"
+                    echo "   • Serveur: ${params.TARGET_SERVER}"
+                    echo "   • Force: ${params.FORCE_INSTALL}"
+                    echo "   • Source: ${params.CHOCOLATEY_SOURCE}"
+                    echo "   • Timeout: ${params.CHOCOLATEY_TIMEOUT}s"
+                    echo "   • Playbook: ${env.SELECTED_PLAYBOOK}"
                 }
             }
         }
         
-        stage('Exécution du Rôle') {
+        stage('Préparation des Variables Ansible') {
+            steps {
+                script {
+                    echo "⚙️ Préparation des variables pour Ansible..."
+                    
+                    // Construire les variables Ansible
+                    def ansibleVars = []
+                    
+                    // Variables obligatoires
+                    ansibleVars << "package_name=${params.PACKAGE_NAME}"
+                    ansibleVars << "package_state=${env.FINAL_PACKAGE_STATE}"
+                    ansibleVars << "force_install=${params.FORCE_INSTALL}"
+                    ansibleVars << "chocolatey_source=${params.CHOCOLATEY_SOURCE}"
+                    ansibleVars << "chocolatey_timeout=${params.CHOCOLATEY_TIMEOUT}"
+                    
+                    // Variables optionnelles
+                    if (params.PACKAGE_VERSION.trim() != '') {
+                        ansibleVars << "package_version=${params.PACKAGE_VERSION}"
+                    }
+                    
+                    if (params.PACKAGE_PARAMS.trim() != '') {
+                        // Échapper les paramètres pour Ansible
+                        def escapedParams = params.PACKAGE_PARAMS.replaceAll('"', '\\\\"')
+                        ansibleVars << "package_params=\"${escapedParams}\""
+                    }
+                    
+                    // Variables supplémentaires de l'utilisateur
+                    if (params.EXTRA_VARS.trim() != '') {
+                        ansibleVars << params.EXTRA_VARS
+                    }
+                    
+                    // Stocker les variables formatées
+                    env.ANSIBLE_EXTRA_VARS = ansibleVars.join(' ')
+                    
+                    echo "🔧 Variables Ansible générées:"
+                    echo "${env.ANSIBLE_EXTRA_VARS}"
+                }
+            }
+        }
+        
+        stage('Vérification Ansible') {
+            steps {
+                script {
+                    // Vérifier qu'Ansible est installé
+                    sh 'ansible --version'
+                    
+                    // Vérifier que le playbook existe
+                    sh """
+                        if [ ! -f "/tmp/ansibleJenkins/ansible/playbook/${env.SELECTED_PLAYBOOK}" ]; then
+                            echo "❌ Playbook ${env.SELECTED_PLAYBOOK} non trouvé!"
+                            echo "📁 Contenu du répertoire playbook:"
+                            ls -la /tmp/ansibleJenkins/ansible/playbook/ || echo "Répertoire non trouvé"
+                            exit 1
+                        fi
+                        
+                        echo "✅ Playbook ${env.SELECTED_PLAYBOOK} trouvé"
+                        
+                        # Vérifier la syntaxe du playbook
+                        ansible-playbook --syntax-check /tmp/ansibleJenkins/ansible/playbook/${env.SELECTED_PLAYBOOK}
+                    """
+                }
+            }
+        }
+        
+        stage('Exécution Chocolatey Package Manager') {
             steps {
                 script {
                     withCredentials([file(credentialsId: 'ansible-ssh-key-file', variable: 'SSH_PRIVATE_KEY_FILE')]) {
-                        sh """
-                            chmod 600 \$SSH_PRIVATE_KEY_FILE
+                        sh '''
+                            chmod 600 $SSH_PRIVATE_KEY_FILE
                             
-                            # Variables pour le playbook
-                            EXTRA_VARS="target_role=${env.SELECTED_ROLE} action=${params.ACTION}"
-                            if [ -n "${params.EXTRA_VARS}" ]; then
-                                EXTRA_VARS="\$EXTRA_VARS ${params.EXTRA_VARS}"
-                            fi
+                            echo "🍫 Démarrage de la gestion du package Chocolatey..."
+                            echo "📦 Package: ''' + params.PACKAGE_NAME + '''"
+                            echo "🎯 Action: ''' + params.PACKAGE_ACTION + '''"
+                            echo "🎪 Serveur: ''' + params.TARGET_SERVER + '''"
                             
-                            echo "🚀 Exécution du rôle ${env.SELECTED_ROLE}..."
-                            
+                            # Exécuter le playbook Ansible
                             ansible-playbook \\
                                 -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \\
-                                /tmp/ansibleJenkins/ansible/playbook/${env.SELECTED_PLAYBOOK} \\
-                                --private-key=\$SSH_PRIVATE_KEY_FILE \\
+                                /tmp/ansibleJenkins/ansible/playbook/$SELECTED_PLAYBOOK \\
+                                --private-key=$SSH_PRIVATE_KEY_FILE \\
                                 --user=ansible \\
-                                --limit=${params.TARGET_SERVER} \\
-                                --extra-vars="\$EXTRA_VARS" \\
+                                --limit=''' + params.TARGET_SERVER + ''' \\
+                                --extra-vars="$ANSIBLE_EXTRA_VARS" \\
                                 --verbose
-                        """
+                        '''
                     }
                 }
             }
@@ -285,59 +208,146 @@ pipeline {
     
     post {
         always {
-            echo "🎭 Gestion des rôles Ansible terminée"
+            echo "🍫 Gestion des packages Chocolatey terminée"
             
-            // Créer un rapport
+            // Créer un rapport détaillé
             script {
                 def report = """
-Rapport d'Exécution Ansible Role
-================================
-Action: ${params.ACTION}
-Rôle: ${env.SELECTED_ROLE ?: 'Non sélectionné'}
-Serveur: ${params.TARGET_SERVER}
-Filtre OS: ${params.OS_FILTER}
+=== RAPPORT CHOCOLATEY PACKAGE MANAGER ===
+Package: ${params.PACKAGE_NAME}
+Version: ${params.PACKAGE_VERSION ?: 'Latest'}
+Action: ${params.PACKAGE_ACTION}
+État Final: ${env.FINAL_PACKAGE_STATE ?: 'Non défini'}
+Serveur Cible: ${params.TARGET_SERVER}
+Force Installation: ${params.FORCE_INSTALL}
+Source Chocolatey: ${params.CHOCOLATEY_SOURCE}
+Timeout: ${params.CHOCOLATEY_TIMEOUT} secondes
+Paramètres Package: ${params.PACKAGE_PARAMS ?: 'Aucun'}
+Variables Extra: ${params.EXTRA_VARS ?: 'Aucune'}
+Variables Ansible: ${env.ANSIBLE_EXTRA_VARS ?: 'Non générées'}
 Playbook: ${env.SELECTED_PLAYBOOK ?: 'Non défini'}
 Build: #${env.BUILD_NUMBER}
-Date: ${new Date().toString()}
+Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+Statut: ${currentBuild.currentResult}
+==========================================
 """
-                writeFile file: 'ansible_role_report.txt', text: report
-                archiveArtifacts artifacts: 'ansible_role_report.txt', allowEmptyArchive: true
+                writeFile file: 'chocolatey_package_report.txt', text: report
+                archiveArtifacts artifacts: 'chocolatey_package_report.txt', allowEmptyArchive: true
             }
         }
         success {
-            echo "✅ Rôle '${env.SELECTED_ROLE}' ${params.ACTION} avec succès!"
-            
-            emailext (
-                subject: "✅ [Jenkins] Ansible Role ${params.ACTION} - ${env.SELECTED_ROLE}",
-                body: """
-                <h2>✅ Rôle Ansible exécuté avec succès</h2>
-                <p><strong>Action:</strong> ${params.ACTION}</p>
-                <p><strong>Rôle:</strong> ${env.SELECTED_ROLE}</p>
-                <p><strong>Serveur:</strong> ${params.TARGET_SERVER}</p>
-                <p><strong>Filtre OS:</strong> ${params.OS_FILTER}</p>
-                <p><strong>Build:</strong> #${env.BUILD_NUMBER}</p>
+            script {
+                echo "✅ Package '${params.PACKAGE_NAME}' ${params.PACKAGE_ACTION} avec succès!"
                 
-                <p><a href="${env.BUILD_URL}">Voir les détails du build</a></p>
-                """,
-                mimeType: 'text/html',
-                to: 'votre-email@example.com'
-            )
+                currentBuild.description = "✅ ${params.PACKAGE_ACTION} ${params.PACKAGE_NAME} → ${params.TARGET_SERVER}"
+                
+                // Test avec mail() simple d'abord
+                mail to: 'xxx@gmail.com',
+                     subject: "✅ [Jenkins] Chocolatey ${params.PACKAGE_ACTION} - ${params.PACKAGE_NAME} - Succès",
+                     body: """Package Chocolatey géré avec succès!
+                     
+Package: ${params.PACKAGE_NAME}
+Version: ${params.PACKAGE_VERSION ?: 'Latest'}
+Action: ${params.PACKAGE_ACTION}
+Serveur: ${params.TARGET_SERVER}
+État Final: ${env.FINAL_PACKAGE_STATE}
+Build: #${env.BUILD_NUMBER}
+
+Voir les détails: ${env.BUILD_URL}"""
+                
+                // Version emailext en parallèle pour test
+                try {
+                    emailext (
+                        subject: "✅ [Jenkins] Chocolatey ${params.PACKAGE_ACTION} - ${params.PACKAGE_NAME} - Succès (HTML)",
+                        body: """
+                        <div style="background: #d4edda; padding: 15px; border-radius: 5px; border-left: 4px solid #28a745;">
+                            <h2 style="color: #155724; margin-top: 0;">🍫 Package Chocolatey géré avec succès</h2>
+                            
+                            <table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+                                <tr>
+                                    <td style="padding: 8px; border: 1px solid #c3e6cb; background: #f8f9fa;"><strong>Package</strong></td>
+                                    <td style="padding: 8px; border: 1px solid #c3e6cb;">${params.PACKAGE_NAME}</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 8px; border: 1px solid #c3e6cb; background: #f8f9fa;"><strong>Version</strong></td>
+                                    <td style="padding: 8px; border: 1px solid #c3e6cb;">${params.PACKAGE_VERSION ?: 'Latest'}</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 8px; border: 1px solid #c3e6cb; background: #f8f9fa;"><strong>Action</strong></td>
+                                    <td style="padding: 8px; border: 1px solid #c3e6cb;">${params.PACKAGE_ACTION}</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 8px; border: 1px solid #c3e6cb; background: #f8f9fa;"><strong>Serveur</strong></td>
+                                    <td style="padding: 8px; border: 1px solid #c3e6cb;">${params.TARGET_SERVER}</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 8px; border: 1px solid #c3e6cb; background: #f8f9fa;"><strong>Build</strong></td>
+                                    <td style="padding: 8px; border: 1px solid #c3e6cb;">#${env.BUILD_NUMBER}</td>
+                                </tr>
+                            </table>
+                            
+                            <p><a href="${env.BUILD_URL}" style="background: #28a745; color: white; padding: 10px 15px; text-decoration: none; border-radius: 4px;">📊 Voir les détails du build</a></p>
+                        </div>
+                        """,
+                        mimeType: 'text/html',
+                        to: 'xxx@gmail.com'
+                    )
+                    echo "✅ Email HTML envoyé avec emailext"
+                } catch (Exception e) {
+                    echo "❌ Erreur emailext: ${e.getMessage()}"
+                    echo "📧 Email simple envoyé avec mail() à la place"
+                }
+            }
         }
         failure {
-            echo "❌ Échec de l'exécution du rôle"
-            
-            emailext (
-                subject: "❌ [Jenkins] Ansible Role - Échec - ${env.SELECTED_ROLE ?: 'Unknown'}",
-                body: """
-                <h2>❌ Échec de l'exécution du rôle Ansible</h2>
-                <p><strong>Action:</strong> ${params.ACTION}</p>
-                <p><strong>Rôle:</strong> ${env.SELECTED_ROLE ?: 'Non sélectionné'}</p>
-                <p><a href="${env.BUILD_URL}console">Voir les logs</a></p>
-                """,
-                mimeType: 'text/html',
-                to: 'votre-email@example.com',
-                attachLog: true
-            )
+            script {
+                echo "❌ Échec de la gestion du package '${params.PACKAGE_NAME}'"
+                
+                currentBuild.description = "❌ ${params.PACKAGE_ACTION} ${params.PACKAGE_NAME} → ÉCHEC"
+                
+                // Test avec mail() simple d'abord
+                mail to: 'l.kieran95@gmail.com',
+                     subject: "❌ [Jenkins] Chocolatey - Échec - ${params.PACKAGE_NAME}",
+                     body: """Échec de la gestion du package Chocolatey!
+                     
+Package: ${params.PACKAGE_NAME}
+Action: ${params.PACKAGE_ACTION}
+Serveur: ${params.TARGET_SERVER}
+Build: #${env.BUILD_NUMBER}
+
+Variables utilisées: ${env.ANSIBLE_EXTRA_VARS ?: 'Non générées'}
+
+Voir les logs: ${env.BUILD_URL}console"""
+                
+                // Version emailext en parallèle pour test
+                try {
+                    emailext (
+                        subject: "❌ [Jenkins] Chocolatey - Échec - ${params.PACKAGE_NAME} (HTML)",
+                        body: """
+                        <div style="background: #f8d7da; padding: 15px; border-radius: 5px; border-left: 4px solid #dc3545;">
+                            <h2 style="color: #721c24; margin-top: 0;">❌ Échec de la gestion du package Chocolatey</h2>
+                            
+                            <p><strong>Package:</strong> ${params.PACKAGE_NAME}</p>
+                            <p><strong>Action:</strong> ${params.PACKAGE_ACTION}</p>
+                            <p><strong>Serveur:</strong> ${params.TARGET_SERVER}</p>
+                            <p><strong>Build:</strong> #${env.BUILD_NUMBER}</p>
+                            
+                            <h3>Variables utilisées:</h3>
+                            <pre style="background: #f8f9fa; padding: 10px; border-radius: 4px;">${env.ANSIBLE_EXTRA_VARS ?: 'Non générées'}</pre>
+                            
+                            <p><a href="${env.BUILD_URL}console" style="background: #dc3545; color: white; padding: 10px 15px; text-decoration: none; border-radius: 4px;">🔍 Voir les logs d'erreur</a></p>
+                        </div>
+                        """,
+                        mimeType: 'text/html',
+                        to: 'l.kieran95@gmail.com',
+                        attachLog: true
+                    )
+                    echo "✅ Email HTML d'échec envoyé avec emailext"
+                } catch (Exception e) {
+                    echo "❌ Erreur emailext: ${e.getMessage()}"
+                    echo "📧 Email simple d'échec envoyé avec mail() à la place"
+                }
+            }
         }
         cleanup {
             cleanWs()
