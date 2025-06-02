@@ -8,141 +8,138 @@ post {
     always {
         script {
             // =================================================================
-            // CONFIGURATION - CUSTOMIZE THESE VARIABLES FOR YOUR PROJECT
+            // GLOBAL VARIABLES DEFINITION - USED ACROSS ALL POST SECTIONS
             // =================================================================
             
-            // Deployment identification
-            def DEPLOYMENT_TYPE = env.DEPLOYMENT_TYPE ?: 'APPLICATION'  // DOCKER, CHOCOLATEY, APPLICATION, etc.
-            def PROJECT_NAME = params.PROJECT_NAME ?: params.PACKAGE_NAME ?: params.APPLICATION_NAME ?: 'Unknown'
-            def PROJECT_VERSION = params.PROJECT_VERSION ?: params.PACKAGE_VERSION ?: params.BUILD_VERSION ?: env.BUILD_VERSION ?: 'Latest'
-            def OPERATION_TYPE = env.OPERATION_TYPE ?: params.OPERATION_TYPE ?: 'DEPLOY'  // DEPLOY, INSTALL, UNINSTALL, UPDATE, etc.
-            def TARGET_ENVIRONMENT = params.TARGET_SERVER ?: params.ENVIRONMENT ?: params.TARGET_ENV ?: 'Unknown'
+            // Store variables in environment for access in other post sections
+            env.POST_DEPLOYMENT_TYPE = env.DEPLOYMENT_TYPE ?: 'APPLICATION'
+            env.POST_PROJECT_NAME = params.PROJECT_NAME ?: params.PACKAGE_NAME ?: params.APPLICATION_NAME ?: 'Unknown'
+            env.POST_PROJECT_VERSION = params.PROJECT_VERSION ?: params.PACKAGE_VERSION ?: params.BUILD_VERSION ?: env.BUILD_VERSION ?: 'Latest'
+            env.POST_OPERATION_TYPE = env.OPERATION_TYPE ?: params.OPERATION_TYPE ?: 'DEPLOY'
+            env.POST_TARGET_ENVIRONMENT = params.TARGET_SERVER ?: params.ENVIRONMENT ?: params.TARGET_ENV ?: 'Unknown'
             
-            // Optional fields (set to empty string if not used)
-            def DOCKER_IMAGE = params.DOCKER_IMAGE ?: env.DOCKER_IMAGE ?: ''
-            def DOCKER_TAG = params.DOCKER_TAG ?: env.DOCKER_TAG ?: ''
-            def APPLICATION_URL = params.APPLICATION_URL ?: env.APPLICATION_URL ?: ''
-            def DATABASE_VERSION = params.DATABASE_VERSION ?: env.DATABASE_VERSION ?: ''
-            def CUSTOM_FIELD_1 = params.CUSTOM_FIELD_1 ?: env.CUSTOM_FIELD_1 ?: ''
-            def CUSTOM_FIELD_2 = params.CUSTOM_FIELD_2 ?: env.CUSTOM_FIELD_2 ?: ''
+            // Optional fields
+            env.POST_DOCKER_IMAGE = params.DOCKER_IMAGE ?: env.DOCKER_IMAGE ?: ''
+            env.POST_DOCKER_TAG = params.DOCKER_TAG ?: env.DOCKER_TAG ?: ''
+            env.POST_APPLICATION_URL = params.APPLICATION_URL ?: env.APPLICATION_URL ?: ''
+            env.POST_DATABASE_VERSION = params.DATABASE_VERSION ?: env.DATABASE_VERSION ?: ''
+            env.POST_CUSTOM_FIELD_1 = params.CUSTOM_FIELD_1 ?: env.CUSTOM_FIELD_1 ?: ''
+            env.POST_CUSTOM_FIELD_2 = params.CUSTOM_FIELD_2 ?: env.CUSTOM_FIELD_2 ?: ''
             
             // Email configuration
-            def EMAIL_RECIPIENT = 'your-email@company.com'  // CUSTOMIZE THIS
-            def EMAIL_SUBJECT_PREFIX = '[Jenkins]'           // CUSTOMIZE THIS
+            env.POST_EMAIL_RECIPIENT = 'xxx@gmail.com'
+            env.POST_EMAIL_SUBJECT_PREFIX = '[SUBJECT]'
+            
+            // Build timestamp
+            env.POST_BUILD_TIMESTAMP = new Date().format('yyyy-MM-dd HH:mm:ss')
             
             // =================================================================
-            // REPORT GENERATION (DO NOT MODIFY UNLESS NEEDED)
+            // HELPER FUNCTIONS FOR EMAIL CONTENT
             // =================================================================
             
-            echo "${DEPLOYMENT_TYPE} deployment completed"
+            // Function to build optional fields for emails
+            env.POST_OPTIONAL_FIELDS = [
+                (env.POST_DOCKER_IMAGE ? "🐳 Docker Image: ${env.POST_DOCKER_IMAGE}" : ''),
+                (env.POST_DOCKER_TAG ? "🏷️ Docker Tag: ${env.POST_DOCKER_TAG}" : ''),
+                (env.POST_APPLICATION_URL ? "🌐 Application URL: ${env.POST_APPLICATION_URL}" : ''),
+                (env.POST_DATABASE_VERSION ? "💾 Database Version: ${env.POST_DATABASE_VERSION}" : ''),
+                (env.POST_CUSTOM_FIELD_1 ? "📝 Custom Field 1: ${env.POST_CUSTOM_FIELD_1}" : ''),
+                (env.POST_CUSTOM_FIELD_2 ? "📝 Custom Field 2: ${env.POST_CUSTOM_FIELD_2}" : '')
+            ].findAll { it != '' }.join('\n')
             
-            // Build comprehensive report
+            // =================================================================
+            // REPORT GENERATION
+            // =================================================================
+            
+            echo "${env.POST_DEPLOYMENT_TYPE} deployment completed"
+            
+            // Build comprehensive report using global variables
             def report = """
-            === ${DEPLOYMENT_TYPE} DEPLOYMENT REPORT ===
-            Project: ${PROJECT_NAME}
-            Version: ${PROJECT_VERSION}
-            Operation: ${OPERATION_TYPE}
-            Target: ${TARGET_ENVIRONMENT}
-            Build: #${env.BUILD_NUMBER}
-            Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
-            Status: ${currentBuild.currentResult}
-            """ + 
-            (DOCKER_IMAGE ? "\nDocker Image: ${DOCKER_IMAGE}" : '') +
-            (DOCKER_TAG ? "\nDocker Tag: ${DOCKER_TAG}" : '') +
-            (APPLICATION_URL ? "\nApplication URL: ${APPLICATION_URL}" : '') +
-            (DATABASE_VERSION ? "\nDatabase Version: ${DATABASE_VERSION}" : '') +
-            (CUSTOM_FIELD_1 ? "\nCustom Field 1: ${CUSTOM_FIELD_1}" : '') +
-            (CUSTOM_FIELD_2 ? "\nCustom Field 2: ${CUSTOM_FIELD_2}" : '') +
-            """
+=== ${env.POST_DEPLOYMENT_TYPE} DEPLOYMENT REPORT ===
+Project: ${env.POST_PROJECT_NAME}
+Version: ${env.POST_PROJECT_VERSION}
+Operation: ${env.POST_OPERATION_TYPE}
+Target: ${env.POST_TARGET_ENVIRONMENT}
+Build: #${env.BUILD_NUMBER}
+Date: ${env.POST_BUILD_TIMESTAMP}
+Status: ${currentBuild.currentResult}
+""" + 
+(env.POST_DOCKER_IMAGE ? "\nDocker Image: ${env.POST_DOCKER_IMAGE}" : '') +
+(env.POST_DOCKER_TAG ? "\nDocker Tag: ${env.POST_DOCKER_TAG}" : '') +
+(env.POST_APPLICATION_URL ? "\nApplication URL: ${env.POST_APPLICATION_URL}" : '') +
+(env.POST_DATABASE_VERSION ? "\nDatabase Version: ${env.POST_DATABASE_VERSION}" : '') +
+(env.POST_CUSTOM_FIELD_1 ? "\nCustom Field 1: ${env.POST_CUSTOM_FIELD_1}" : '') +
+(env.POST_CUSTOM_FIELD_2 ? "\nCustom Field 2: ${env.POST_CUSTOM_FIELD_2}" : '') +
+"""
 
-            Build URL: ${env.BUILD_URL}
-            Console Logs: ${env.BUILD_URL}console
-            ==========================================
-            """
+Build URL: ${env.BUILD_URL}
+Console Logs: ${env.BUILD_URL}console
+==========================================
+"""
             
-            writeFile file: "${DEPLOYMENT_TYPE.toLowerCase()}_deployment_report.txt", text: report
-            archiveArtifacts artifacts: "${DEPLOYMENT_TYPE.toLowerCase()}_deployment_report.txt", allowEmptyArchive: true
+            writeFile file: "${env.POST_DEPLOYMENT_TYPE.toLowerCase()}_deployment_report.txt", text: report
+            archiveArtifacts artifacts: "${env.POST_DEPLOYMENT_TYPE.toLowerCase()}_deployment_report.txt", allowEmptyArchive: true
         }
     }
     
     success {
         script {
-            // Use the same variables defined in 'always' section
-            def DEPLOYMENT_TYPE = env.DEPLOYMENT_TYPE ?: 'APPLICATION'
-            def PROJECT_NAME = params.PROJECT_NAME ?: params.PACKAGE_NAME ?: params.APPLICATION_NAME ?: 'Unknown'
-            def PROJECT_VERSION = params.PROJECT_VERSION ?: params.PACKAGE_VERSION ?: params.BUILD_VERSION ?: env.BUILD_VERSION ?: 'Latest'
-            def OPERATION_TYPE = env.OPERATION_TYPE ?: params.OPERATION_TYPE ?: 'DEPLOY'
-            def TARGET_ENVIRONMENT = params.TARGET_SERVER ?: params.ENVIRONMENT ?: params.TARGET_ENV ?: 'Unknown'
-            def DOCKER_IMAGE = params.DOCKER_IMAGE ?: env.DOCKER_IMAGE ?: ''
-            def DOCKER_TAG = params.DOCKER_TAG ?: env.DOCKER_TAG ?: ''
-            def APPLICATION_URL = params.APPLICATION_URL ?: env.APPLICATION_URL ?: ''
-            def EMAIL_RECIPIENT = 'your-email@company.com'
-            def EMAIL_SUBJECT_PREFIX = '[Jenkins]'
+            echo "${env.POST_OPERATION_TYPE} '${env.POST_PROJECT_NAME}' completed successfully!"
             
-            echo "${OPERATION_TYPE} '${PROJECT_NAME}' completed successfully!"
+            // Set build description using global variables
+            currentBuild.description = "${env.POST_OPERATION_TYPE} ${env.POST_PROJECT_NAME} v${env.POST_PROJECT_VERSION} → ${env.POST_TARGET_ENVIRONMENT}"
             
-            currentBuild.description = "${OPERATION_TYPE} ${PROJECT_NAME} v${PROJECT_VERSION} → ${TARGET_ENVIRONMENT}"
-            
-            // Build dynamic email body
+            // Build email body using global variables and helper
             def emailBody = """
-            🚀 ${DEPLOYMENT_TYPE} DEPLOYMENT - SUCCESS
+🚀 ${env.POST_DEPLOYMENT_TYPE} DEPLOYMENT - SUCCESS
 
-            Project: ${PROJECT_NAME}
-            Version: ${PROJECT_VERSION}
-            Operation: ${OPERATION_TYPE}
-            Environment: ${TARGET_ENVIRONMENT}
-            Build: #${env.BUILD_NUMBER}
-            Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+Project: ${env.POST_PROJECT_NAME}
+Version: ${env.POST_PROJECT_VERSION}
+Operation: ${env.POST_OPERATION_TYPE}
+Environment: ${env.POST_TARGET_ENVIRONMENT}
+Build: #${env.BUILD_NUMBER}
+Date: ${env.POST_BUILD_TIMESTAMP}
 
-            📊 Build details: ${env.BUILD_URL}
-            """ + 
-            (DOCKER_IMAGE ? "\n🐳 Docker Image: ${DOCKER_IMAGE}" : '') +
-            (DOCKER_TAG ? "\n🏷️ Docker Tag: ${DOCKER_TAG}" : '') +
-            (APPLICATION_URL ? "\n🌐 Application URL: ${APPLICATION_URL}" : '') +
-            """
+📊 Build details: ${env.BUILD_URL}
 
-            ✅ The ${OPERATION_TYPE.toLowerCase()} operation completed successfully.
-            """
+${env.POST_OPTIONAL_FIELDS}
+
+✅ The ${env.POST_OPERATION_TYPE.toLowerCase()} operation completed successfully.
+"""
             
-            mail to: EMAIL_RECIPIENT,
-                subject: "${EMAIL_SUBJECT_PREFIX} ${DEPLOYMENT_TYPE} ${OPERATION_TYPE} - ${PROJECT_NAME} - Success",
+            mail to: env.POST_EMAIL_RECIPIENT,
+                subject: "${env.POST_EMAIL_SUBJECT_PREFIX} ${env.POST_DEPLOYMENT_TYPE} ${env.POST_OPERATION_TYPE} - ${env.POST_PROJECT_NAME} - Success",
                 body: emailBody
         }
     }
     
     failure {
         script {
-            // Use the same variables defined in 'always' section
-            def DEPLOYMENT_TYPE = env.DEPLOYMENT_TYPE ?: 'APPLICATION'
-            def PROJECT_NAME = params.PROJECT_NAME ?: params.PACKAGE_NAME ?: params.APPLICATION_NAME ?: 'Unknown'
-            def PROJECT_VERSION = params.PROJECT_VERSION ?: params.PACKAGE_VERSION ?: params.BUILD_VERSION ?: env.BUILD_VERSION ?: 'Latest'
-            def OPERATION_TYPE = env.OPERATION_TYPE ?: params.OPERATION_TYPE ?: 'DEPLOY'
-            def TARGET_ENVIRONMENT = params.TARGET_SERVER ?: params.ENVIRONMENT ?: params.TARGET_ENV ?: 'Unknown'
-            def EMAIL_RECIPIENT = 'your-email@company.com'
-            def EMAIL_SUBJECT_PREFIX = '[Jenkins]'
+            echo "Failed to ${env.POST_OPERATION_TYPE.toLowerCase()} '${env.POST_PROJECT_NAME}'"
             
-            echo "Failed to ${OPERATION_TYPE.toLowerCase()} '${PROJECT_NAME}'"
+            // Set build description using global variables
+            currentBuild.description = "${env.POST_OPERATION_TYPE} ${env.POST_PROJECT_NAME} v${env.POST_PROJECT_VERSION} → FAILED"
             
-            currentBuild.description = "${OPERATION_TYPE} ${PROJECT_NAME} v${PROJECT_VERSION} → FAILED"
-            
-            // Build failure email body
+            // Build failure email body using global variables
             def emailBody = """
-            ❌ ${DEPLOYMENT_TYPE} DEPLOYMENT - FAILURE
+❌ ${env.POST_DEPLOYMENT_TYPE} DEPLOYMENT - FAILURE
 
-            Project: ${PROJECT_NAME}
-            Version: ${PROJECT_VERSION}
-            Operation: ${OPERATION_TYPE}
-            Environment: ${TARGET_ENVIRONMENT}
-            Build: #${env.BUILD_NUMBER}
-            Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+Project: ${env.POST_PROJECT_NAME}
+Version: ${env.POST_PROJECT_VERSION}
+Operation: ${env.POST_OPERATION_TYPE}
+Environment: ${env.POST_TARGET_ENVIRONMENT}
+Build: #${env.BUILD_NUMBER}
+Date: ${env.POST_BUILD_TIMESTAMP}
 
-            🔍 Error logs: ${env.BUILD_URL}console
+🔍 Error logs: ${env.BUILD_URL}console
 
-            ⚠️ Please check the logs for more details.
-            """
+${env.POST_OPTIONAL_FIELDS}
+
+⚠️ Please check the logs for more details.
+"""
             
-            mail to: EMAIL_RECIPIENT,
-                subject: "${EMAIL_SUBJECT_PREFIX} ${DEPLOYMENT_TYPE} ${OPERATION_TYPE} - ${PROJECT_NAME} - Failure",
+            mail to: env.POST_EMAIL_RECIPIENT,
+                subject: "${env.POST_EMAIL_SUBJECT_PREFIX} ${env.POST_DEPLOYMENT_TYPE} ${env.POST_OPERATION_TYPE} - ${env.POST_PROJECT_NAME} - Failure",
                 body: emailBody
         }
     }
