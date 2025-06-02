@@ -17,76 +17,88 @@ pipeline {
                 'ReverseProxy',
                 'Linux'
             ],
-            description: 'Serveur cible pour le déploiement'
+            description: 'Target server for deployment'
         )
         string(
             name: 'PACKAGE_NAME',
             defaultValue: '',
-            description: 'Nom du package à installer/désinstaller (ex: googlechrome, firefox, git)'
+            description: 'Package name to install/uninstall (e.g.: googlechrome, firefox, git)'
         )
         string(
             name: 'PACKAGE_VERSION',
             defaultValue: '',
-            description: 'Version spécifique du package (optionnel - laisser vide pour la dernière version)'
+            description: 'Specific package version (optional - leave empty for latest version)'
         )
         choice(
             name: 'PACKAGE_STATE',
             choices: ['present', 'absent', 'latest'],
-            description: 'État souhaité du package'
+            description: 'Desired package state'
         )
         booleanParam(
             name: 'FORCE_INSTALL',
             defaultValue: false,
-            description: 'Forcer l\'installation même si le package existe déjà'
+            description: 'Force installation even if package already exists'
         )
         string(
             name: 'CHOCOLATEY_SOURCE',
             defaultValue: 'https://chocolatey.org/api/v2/',
-            description: 'Source Chocolatey (repository URL)'
+            description: 'Chocolatey source (repository URL)'
         )
         choice(
             name: 'CHOCOLATEY_TIMEOUT',
             choices: ['1800', '3600', '7200', '10800'],
-            description: 'Timeout en secondes (1800=30min, 3600=1h, 7200=2h, 10800=3h)'
+            description: 'Timeout in seconds (1800=30min, 3600=1h, 7200=2h, 10800=3h)'
         )
         text(
             name: 'PACKAGE_PARAMS',
             defaultValue: '',
-            description: 'Paramètres supplémentaires pour l\'installation (ex: /InstallDir=C:\\MyApp /NoDesktopIcon)'
+            description: 'Additional installation parameters (e.g.: /InstallDir=C:\\MyApp /NoDesktopIcon)'
         )
         text(
             name: 'EXTRA_VARS',
             defaultValue: '',
-            description: 'Variables Ansible supplémentaires (format: key=value séparées par des espaces)'
+            description: 'Additional Ansible variables (format: key=value separated by spaces)'
         )
     }
     
     stages {
-        stage('Validation des Paramètres') {
+        stage('Parameter Validation') {
             steps {
                 script {
-                    echo "🔍 Validation des paramètres Chocolatey..."
+                    echo "🔍 Validating Chocolatey parameters..."
                     
-                    // Validation du nom du package
+                    // Package name validation
                     if (params.PACKAGE_NAME.trim() == '') {
-                        error("Le nom du package est obligatoire!")
+                        error("Package name is required!")
                     }
                     
-                    // Validation du serveur Windows
+                    // Windows server validation
                     if (!params.TARGET_SERVER.toLowerCase().contains('windows') && 
                         !params.TARGET_SERVER.contains('all-windows') && 
                         !params.TARGET_SERVER.contains('all-servers')) {
-                        echo "Attention: Chocolatey ne fonctionne que sur Windows. Serveur sélectionné: ${params.TARGET_SERVER}"
+                        echo "Warning: Chocolatey only works on Windows. Selected server: ${params.TARGET_SERVER}"
                     }
                     
-                    // Déterminer le playbook
-                    env.SELECTED_PLAYBOOK = 'deploy_package_windows_chocolatey.yml'
+                    // Determine playbook based on package state
+                    if (params.PACKAGE_STATE == 'present' || params.PACKAGE_STATE == 'latest') {
+                        env.SELECTED_PLAYBOOK = 'deploy_package_windows_chocolatey.yml'
+                        env.OPERATION_TYPE = 'INSTALL'
+                    } else if (params.PACKAGE_STATE == 'absent') {
+                        env.SELECTED_PLAYBOOK = 'uninstall_package_windows_chocolatey.yml'
+                        env.OPERATION_TYPE = 'UNINSTALL'
+                    } else {
+                        error("Invalid package state: ${params.PACKAGE_STATE}")
+                    }
                     
-                    echo "Résumé des paramètres:"
+                    // Set final package state for reporting
+                    env.FINAL_PACKAGE_STATE = params.PACKAGE_STATE
+                    
+                    echo "Parameter summary:"
                     echo "   • Package: ${params.PACKAGE_NAME}"
                     echo "   • Version: ${params.PACKAGE_VERSION ?: 'Latest'}"
                     echo "   • Action: ${params.PACKAGE_STATE}"
-                    echo "   • Serveur: ${params.TARGET_SERVER}"
+                    echo "   • Operation: ${env.OPERATION_TYPE}"
+                    echo "   • Server: ${params.TARGET_SERVER}"
                     echo "   • Force: ${params.FORCE_INSTALL}"
                     echo "   • Source: ${params.CHOCOLATEY_SOURCE}"
                     echo "   • Timeout: ${params.CHOCOLATEY_TIMEOUT}s"
@@ -95,193 +107,232 @@ pipeline {
             }
         }
         
-        stage('Préparation des Variables Ansible') {
+        stage('Ansible Variables Preparation') {
             steps {
                 script {
-                    echo "Préparation des variables pour Ansible..."
+                    echo "Preparing variables for Ansible..."
                     
-                    // Construire les variables Ansible
+                    // Build Ansible variables
                     def ansibleVars = []
                     
-                    // Variables obligatoires
+                    // Required variables
                     ansibleVars << "package_name=${params.PACKAGE_NAME}"
                     ansibleVars << "package_state=${env.FINAL_PACKAGE_STATE}"
                     ansibleVars << "force_install=${params.FORCE_INSTALL}"
                     ansibleVars << "chocolatey_source=${params.CHOCOLATEY_SOURCE}"
                     ansibleVars << "chocolatey_timeout=${params.CHOCOLATEY_TIMEOUT}"
                     
-                    // Variables optionnelles
+                    // Optional variables
                     if (params.PACKAGE_VERSION.trim() != '') {
                         ansibleVars << "package_version=${params.PACKAGE_VERSION}"
                     }
                     
                     if (params.PACKAGE_PARAMS.trim() != '') {
-                        // Échapper les paramètres pour Ansible
+                        // Escape parameters for Ansible
                         def escapedParams = params.PACKAGE_PARAMS.replaceAll('"', '\\\\"')
                         ansibleVars << "package_params=\"${escapedParams}\""
                     }
                     
-                    // Variables supplémentaires de l'utilisateur
+                    // User additional variables
                     if (params.EXTRA_VARS.trim() != '') {
                         ansibleVars << params.EXTRA_VARS
                     }
                     
-                    // Stocker les variables formatées
+                    // Store formatted variables
                     env.ANSIBLE_EXTRA_VARS = ansibleVars.join(' ')
                     
-                    echo "🔧 Variables Ansible générées:"
+                    echo "Generated Ansible variables:"
                     echo "${env.ANSIBLE_EXTRA_VARS}"
                 }
             }
         }
         
-        stage('Vérification Ansible') {
+        stage('Ansible Verification') {
             steps {
                 script {
-                    // Vérifier qu'Ansible est installé
+                    // Check that Ansible is installed
                     sh 'ansible --version'
                     
-                    // Vérifier que le playbook existe
+                    // Check that the playbook exists
                     sh """
                         if [ ! -f "/tmp/ansibleJenkins/ansible/playbook/${env.SELECTED_PLAYBOOK}" ]; then
-                            echo "Playbook ${env.SELECTED_PLAYBOOK} non trouvé!"
-                            echo "Contenu du répertoire playbook:"
-                            ls -la /tmp/ansibleJenkins/ansible/playbook/ || echo "Répertoire non trouvé"
+                            echo "Playbook ${env.SELECTED_PLAYBOOK} not found!"
+                            echo "Playbook directory contents:"
+                            ls -la /tmp/ansibleJenkins/ansible/playbook/ || echo "Directory not found"
                             exit 1
                         fi
                         
-                        echo "Playbook ${env.SELECTED_PLAYBOOK} trouvé"
+                        echo "Playbook ${env.SELECTED_PLAYBOOK} found"
                         
-                        # Vérifier la syntaxe du playbook
+                        # Check playbook syntax
                         #ansible-playbook --syntax-check /tmp/ansibleJenkins/ansible/playbook/${env.SELECTED_PLAYBOOK}
                     """
                 }
             }
         }
         
-        stage('Exécution Chocolatey Package Manager') {
+        stage('Chocolatey Package Manager Execution') {
             steps {
                 script {
                     withCredentials([file(credentialsId: 'ssh-key-ansible-user-secret-file', variable: 'SSH_PRIVATE_KEY_FILE')]) {
-                        sh '''
-                            chmod 600 $SSH_PRIVATE_KEY_FILE
+                        // Conditional execution based on package state
+                        if (params.PACKAGE_STATE == 'present' || params.PACKAGE_STATE == 'latest') {
+                            echo "🚀 Starting Chocolatey package INSTALLATION..."
+                            echo "Package: ${params.PACKAGE_NAME}"
+                            echo "Action: ${params.PACKAGE_STATE} (INSTALL)"
+                            echo "Server: ${params.TARGET_SERVER}"
+                            echo "Playbook: ${env.SELECTED_PLAYBOOK}"
                             
-                            echo "Démarrage de la gestion du package Chocolatey..."
-                            echo "Package: ''' + params.PACKAGE_NAME + '''"
-                            echo "Action: ''' + params.PACKAGE_STATE + '''"
-                            echo "Serveur: ''' + params.TARGET_SERVER + '''"
+                            sh '''
+                                chmod 600 $SSH_PRIVATE_KEY_FILE
+                                
+                                echo "Executing INSTALLATION playbook..."
+                                
+                                # Execute Ansible playbook for installation
+                                ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \
+                                    /tmp/ansibleJenkins/ansible/playbook/${SELECTED_PLAYBOOK} \
+                                    -e HOST=${TARGET_SERVER} \
+                                    -e package_name=${PACKAGE_NAME} \
+                                    -e package_version=${PACKAGE_VERSION} \
+                                    -e package_state=${PACKAGE_STATE} \
+                                    -e force_install=${FORCE_INSTALL} \
+                                    -e chocolatey_source=${CHOCOLATEY_SOURCE} \
+                                    -e chocolatey_timeout=${CHOCOLATEY_TIMEOUT}
+                            '''
+                        } else if (params.PACKAGE_STATE == 'absent') {
+                            echo "🗑️ Starting Chocolatey package UNINSTALLATION..."
+                            echo "Package: ${params.PACKAGE_NAME}"
+                            echo "Action: ${params.PACKAGE_STATE} (UNINSTALL)"
+                            echo "Server: ${params.TARGET_SERVER}"
+                            echo "Playbook: ${env.SELECTED_PLAYBOOK}"
                             
-                            # Exécuter le playbook Ansible
-                            ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini /tmp/ansibleJenkins/ansible/playbook/${SELECTED_PLAYBOOK} -e HOST=${TARGET_SERVER} -e package_name=${PACKAGE_NAME} -e package_version=${PACKAGE_VERSION} -e package_state=${PACKAGE_STATE} -e force_install=${FORCE_INSTALL}
-                        '''
+                            sh '''
+                                chmod 600 $SSH_PRIVATE_KEY_FILE
+                                
+                                echo "Executing UNINSTALLATION playbook..."
+                                
+                                # Execute Ansible playbook for uninstallation
+                                ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \
+                                    /tmp/ansibleJenkins/ansible/playbook/${SELECTED_PLAYBOOK} \
+                                    -e HOST=${TARGET_SERVER} \
+                                    -e package_name=${PACKAGE_NAME} \
+                                    -e package_state=${PACKAGE_STATE} \
+                                    -e force_install=${FORCE_INSTALL}
+                            '''
+                        } else {
+                            error("Unsupported package state: ${params.PACKAGE_STATE}")
+                        }
                     }
                 }
             }
         }
     }
     
-post {
-    always {
-        echo "Gestion des packages Chocolatey terminée"
-        
-        // Créer un rapport détaillé
-        script {
-            def report = """
-            === RAPPORT CHOCOLATEY PACKAGE MANAGER ===
-            Package: ${params.PACKAGE_NAME}
-            Version: ${params.PACKAGE_VERSION ?: 'Latest'}
-            État Final: ${env.FINAL_PACKAGE_STATE ?: 'Non défini'}
-            Serveur Cible: ${params.TARGET_SERVER}
-            Force Installation: ${params.FORCE_INSTALL}
-            Source Chocolatey: ${params.CHOCOLATEY_SOURCE}
-            Timeout: ${params.CHOCOLATEY_TIMEOUT} secondes
-            Paramètres Package: ${params.PACKAGE_PARAMS ?: 'Aucun'}
-            Variables Extra: ${params.EXTRA_VARS ?: 'Aucune'}
-            Variables Ansible: ${env.ANSIBLE_EXTRA_VARS ?: 'Non générées'}
-            Playbook: ${env.SELECTED_PLAYBOOK ?: 'Non défini'}
-            Build: #${env.BUILD_NUMBER}
-            Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
-            Statut: ${currentBuild.currentResult}
-            ==========================================
-            """
-            writeFile file: 'chocolatey_package_report.txt', text: report
-            archiveArtifacts artifacts: 'chocolatey_package_report.txt', allowEmptyArchive: true
+    post {
+        always {
+            echo "Chocolatey package management completed"
+            
+            // Create detailed report
+            script {
+                def report = """
+                === CHOCOLATEY PACKAGE MANAGER REPORT ===
+                Package: ${params.PACKAGE_NAME}
+                Version: ${params.PACKAGE_VERSION ?: 'Latest'}
+                Final State: ${env.FINAL_PACKAGE_STATE ?: 'Not defined'}
+                Operation: ${env.OPERATION_TYPE ?: 'Not defined'}
+                Target Server: ${params.TARGET_SERVER}
+                Force Installation: ${params.FORCE_INSTALL}
+                Chocolatey Source: ${params.CHOCOLATEY_SOURCE}
+                Timeout: ${params.CHOCOLATEY_TIMEOUT} seconds
+                Package Parameters: ${params.PACKAGE_PARAMS ?: 'None'}
+                Extra Variables: ${params.EXTRA_VARS ?: 'None'}
+                Ansible Variables: ${env.ANSIBLE_EXTRA_VARS ?: 'Not generated'}
+                Playbook: ${env.SELECTED_PLAYBOOK ?: 'Not defined'}
+                Build: #${env.BUILD_NUMBER}
+                Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+                Status: ${currentBuild.currentResult}
+                ==========================================
+                """
+                writeFile file: 'chocolatey_package_report.txt', text: report
+                archiveArtifacts artifacts: 'chocolatey_package_report.txt', allowEmptyArchive: true
+            }
         }
-    }
-    success {
-        script {
-            echo "Package '${params.PACKAGE_NAME}' ${params.PACKAGE_STATE} avec succès!"
-            
-            currentBuild.description = "${params.PACKAGE_STATE} ${params.PACKAGE_NAME} → ${params.TARGET_SERVER}"
-            
-            // Créer le corps de l'email en texte avec formatage
-            def emailBody = """
-                🍫 CHOCOLATEY PACKAGE - SUCCÈS
+        success {
+            script {
+                echo "Package '${params.PACKAGE_NAME}' ${params.PACKAGE_STATE} completed successfully!"
+                
+                currentBuild.description = "${env.OPERATION_TYPE} ${params.PACKAGE_NAME} → ${params.TARGET_SERVER}"
+                
+                // Create email body with formatting
+                def emailBody = """
+                🍫 CHOCOLATEY PACKAGE - SUCCESS
 
                 Package: ${params.PACKAGE_NAME}
                 Version: ${params.PACKAGE_VERSION ?: 'Latest'}
-                Action: ${params.PACKAGE_STATE}
-                Serveur: ${params.TARGET_SERVER}
-                État Final: ${env.FINAL_PACKAGE_STATE ?: 'Non défini'}
+                Action: ${params.PACKAGE_STATE} (${env.OPERATION_TYPE})
+                Server: ${params.TARGET_SERVER}
+                Final State: ${env.FINAL_PACKAGE_STATE ?: 'Not defined'}
                 Build: #${env.BUILD_NUMBER}
                 Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
 
-                Détails du build: ${env.BUILD_URL}
+                📊 Build details: ${env.BUILD_URL}
 
-                Configuration utilisée:
+                Configuration used:
                 - Force Installation: ${params.FORCE_INSTALL}
-                - Source Chocolatey: ${params.CHOCOLATEY_SOURCE}
-                - Timeout: ${params.CHOCOLATEY_TIMEOUT} secondes
-                - Paramètres Package: ${params.PACKAGE_PARAMS ?: 'Aucun'}
-                - Variables Extra: ${params.EXTRA_VARS ?: 'Aucune'}
+                - Chocolatey Source: ${params.CHOCOLATEY_SOURCE}
+                - Timeout: ${params.CHOCOLATEY_TIMEOUT} seconds
+                - Package Parameters: ${params.PACKAGE_PARAMS ?: 'None'}
+                - Extra Variables: ${params.EXTRA_VARS ?: 'None'}
+                - Playbook executed: ${env.SELECTED_PLAYBOOK}
 
-                L'opération s'est terminée avec succès.
-            """
-            
-            mail to: 'l.kieran95@gmail.com',
-                subject: "[Jenkins] Chocolatey ${params.PACKAGE_STATE} - ${params.PACKAGE_NAME} - Succès",
-                body: emailBody
+                ✅ The operation completed successfully.
+                """
+                
+                mail to: 'l.kieran95@gmail.com',
+                    subject: "[Jenkins] Chocolatey ${env.OPERATION_TYPE} - ${params.PACKAGE_NAME} - Success",
+                    body: emailBody
+            }
         }
-    }
-    failure {
-        script {
-            echo "Échec de la gestion du package '${params.PACKAGE_NAME}'"
-            
-            currentBuild.description = "${params.PACKAGE_STATE} ${params.PACKAGE_NAME} → ÉCHEC"
-            
-            // Créer le corps de l'email d'échec
-            def emailBody = """
-                CHOCOLATEY PACKAGE - ÉCHEC
+        failure {
+            script {
+                echo "Failed to manage package '${params.PACKAGE_NAME}'"
+                
+                currentBuild.description = "${env.OPERATION_TYPE} ${params.PACKAGE_NAME} → FAILED"
+                
+                // Create failure email body
+                def emailBody = """
+                ❌ CHOCOLATEY PACKAGE - FAILURE
 
                 Package: ${params.PACKAGE_NAME}
                 Version: ${params.PACKAGE_VERSION ?: 'Latest'}
-                Action: ${params.PACKAGE_STATE}
-                Serveur: ${params.TARGET_SERVER}
+                Action: ${params.PACKAGE_STATE} (${env.OPERATION_TYPE})
+                Server: ${params.TARGET_SERVER}
                 Build: #${env.BUILD_NUMBER}
                 Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
 
-                Logs d'erreur: ${env.BUILD_URL}console
+                Error logs: ${env.BUILD_URL}console
 
-                Configuration utilisée:
+                Configuration used:
                 - Force Installation: ${params.FORCE_INSTALL}
-                - Source Chocolatey: ${params.CHOCOLATEY_SOURCE}
-                - Timeout: ${params.CHOCOLATEY_TIMEOUT} secondes
-                - Paramètres Package: ${params.PACKAGE_PARAMS ?: 'Aucun'}
-                - Variables Extra: ${params.EXTRA_VARS ?: 'Aucune'}
+                - Chocolatey Source: ${params.CHOCOLATEY_SOURCE}
+                - Timeout: ${params.CHOCOLATEY_TIMEOUT} seconds
+                - Package Parameters: ${params.PACKAGE_PARAMS ?: 'None'}
+                - Extra Variables: ${params.EXTRA_VARS ?: 'None'}
+                - Playbook attempted: ${env.SELECTED_PLAYBOOK}
 
-                Variables Ansible générées:
-                ${env.ANSIBLE_EXTRA_VARS ?: 'Non générées'}
+                Ansible variables generated:
+                ${env.ANSIBLE_EXTRA_VARS ?: 'Not generated'}
 
-                Veuillez vérifier les logs pour plus de détails.
-            """
-            
-            mail to: 'l.kieran95@gmail.com',
-                subject: "[Jenkins] Chocolatey - Échec - ${params.PACKAGE_NAME}",
-                body: emailBody
+                Please check the logs for more details.
+                """
+                
+                mail to: 'l.kieran95@gmail.com',
+                    subject: "[Jenkins] Chocolatey ${env.OPERATION_TYPE} - ${params.PACKAGE_NAME} - Failure",
+                    body: emailBody
+            }
+        }
+        cleanup {
+            cleanWs()
         }
     }
-    cleanup {
-        cleanWs()
-    }
-  }
 }
