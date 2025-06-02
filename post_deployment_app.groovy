@@ -55,27 +55,27 @@ post {
             
             // Build comprehensive report using global variables
             def report = """
-=== ${env.POST_DEPLOYMENT_TYPE} DEPLOYMENT REPORT ===
-Project: ${env.POST_PROJECT_NAME}
-Version: ${env.POST_PROJECT_VERSION}
-Operation: ${env.POST_OPERATION_TYPE}
-Target: ${env.POST_TARGET_ENVIRONMENT}
-Build: #${env.BUILD_NUMBER}
-Date: ${env.POST_BUILD_TIMESTAMP}
-Status: ${currentBuild.currentResult}
-""" + 
-(env.POST_DOCKER_IMAGE ? "\nDocker Image: ${env.POST_DOCKER_IMAGE}" : '') +
-(env.POST_DOCKER_TAG ? "\nDocker Tag: ${env.POST_DOCKER_TAG}" : '') +
-(env.POST_APPLICATION_URL ? "\nApplication URL: ${env.POST_APPLICATION_URL}" : '') +
-(env.POST_DATABASE_VERSION ? "\nDatabase Version: ${env.POST_DATABASE_VERSION}" : '') +
-(env.POST_CUSTOM_FIELD_1 ? "\nCustom Field 1: ${env.POST_CUSTOM_FIELD_1}" : '') +
-(env.POST_CUSTOM_FIELD_2 ? "\nCustom Field 2: ${env.POST_CUSTOM_FIELD_2}" : '') +
-"""
+            === ${env.POST_DEPLOYMENT_TYPE} DEPLOYMENT REPORT ===
+            Project: ${env.POST_PROJECT_NAME}
+            Version: ${env.POST_PROJECT_VERSION}
+            Operation: ${env.POST_OPERATION_TYPE}
+            Target: ${env.POST_TARGET_ENVIRONMENT}
+            Build: #${env.BUILD_NUMBER}
+            Date: ${env.POST_BUILD_TIMESTAMP}
+            Status: ${currentBuild.currentResult}
+            """ + 
+            (env.POST_DOCKER_IMAGE ? "\nDocker Image: ${env.POST_DOCKER_IMAGE}" : '') +
+            (env.POST_DOCKER_TAG ? "\nDocker Tag: ${env.POST_DOCKER_TAG}" : '') +
+            (env.POST_APPLICATION_URL ? "\nApplication URL: ${env.POST_APPLICATION_URL}" : '') +
+            (env.POST_DATABASE_VERSION ? "\nDatabase Version: ${env.POST_DATABASE_VERSION}" : '') +
+            (env.POST_CUSTOM_FIELD_1 ? "\nCustom Field 1: ${env.POST_CUSTOM_FIELD_1}" : '') +
+            (env.POST_CUSTOM_FIELD_2 ? "\nCustom Field 2: ${env.POST_CUSTOM_FIELD_2}" : '') +
+            """
 
-Build URL: ${env.BUILD_URL}
-Console Logs: ${env.BUILD_URL}console
-==========================================
-"""
+            Build URL: ${env.BUILD_URL}
+            Console Logs: ${env.BUILD_URL}console
+            ==========================================
+            """
             
             writeFile file: "${env.POST_DEPLOYMENT_TYPE.toLowerCase()}_deployment_report.txt", text: report
             archiveArtifacts artifacts: "${env.POST_DEPLOYMENT_TYPE.toLowerCase()}_deployment_report.txt", allowEmptyArchive: true
@@ -91,21 +91,21 @@ Console Logs: ${env.BUILD_URL}console
             
             // Build email body using global variables and helper
             def emailBody = """
-🚀 ${env.POST_DEPLOYMENT_TYPE} DEPLOYMENT - SUCCESS
+            🚀 ${env.POST_DEPLOYMENT_TYPE} DEPLOYMENT - SUCCESS
 
-Project: ${env.POST_PROJECT_NAME}
-Version: ${env.POST_PROJECT_VERSION}
-Operation: ${env.POST_OPERATION_TYPE}
-Environment: ${env.POST_TARGET_ENVIRONMENT}
-Build: #${env.BUILD_NUMBER}
-Date: ${env.POST_BUILD_TIMESTAMP}
+            Project: ${env.POST_PROJECT_NAME}
+            Version: ${env.POST_PROJECT_VERSION}
+            Operation: ${env.POST_OPERATION_TYPE}
+            Environment: ${env.POST_TARGET_ENVIRONMENT}
+            Build: #${env.BUILD_NUMBER}
+            Date: ${env.POST_BUILD_TIMESTAMP}
 
-📊 Build details: ${env.BUILD_URL}
+            📊 Build details: ${env.BUILD_URL}
 
-${env.POST_OPTIONAL_FIELDS}
+            ${env.POST_OPTIONAL_FIELDS}
 
-✅ The ${env.POST_OPERATION_TYPE.toLowerCase()} operation completed successfully.
-"""
+            ✅ The ${env.POST_OPERATION_TYPE.toLowerCase()} operation completed successfully.
+            """
             
             mail to: env.POST_EMAIL_RECIPIENT,
                 subject: "${env.POST_EMAIL_SUBJECT_PREFIX} ${env.POST_DEPLOYMENT_TYPE} ${env.POST_OPERATION_TYPE} - ${env.POST_PROJECT_NAME} - Success",
@@ -122,21 +122,21 @@ ${env.POST_OPTIONAL_FIELDS}
             
             // Build failure email body using global variables
             def emailBody = """
-❌ ${env.POST_DEPLOYMENT_TYPE} DEPLOYMENT - FAILURE
+            ❌ ${env.POST_DEPLOYMENT_TYPE} DEPLOYMENT - FAILURE
 
-Project: ${env.POST_PROJECT_NAME}
-Version: ${env.POST_PROJECT_VERSION}
-Operation: ${env.POST_OPERATION_TYPE}
-Environment: ${env.POST_TARGET_ENVIRONMENT}
-Build: #${env.BUILD_NUMBER}
-Date: ${env.POST_BUILD_TIMESTAMP}
+            Project: ${env.POST_PROJECT_NAME}
+            Version: ${env.POST_PROJECT_VERSION}
+            Operation: ${env.POST_OPERATION_TYPE}
+            Environment: ${env.POST_TARGET_ENVIRONMENT}
+            Build: #${env.BUILD_NUMBER}
+            Date: ${env.POST_BUILD_TIMESTAMP}
 
-🔍 Error logs: ${env.BUILD_URL}console
+            🔍 Error logs: ${env.BUILD_URL}console
 
-${env.POST_OPTIONAL_FIELDS}
+            ${env.POST_OPTIONAL_FIELDS}
 
-⚠️ Please check the logs for more details.
-"""
+            ⚠️ Please check the logs for more details.
+            """
             
             mail to: env.POST_EMAIL_RECIPIENT,
                 subject: "${env.POST_EMAIL_SUBJECT_PREFIX} ${env.POST_DEPLOYMENT_TYPE} ${env.POST_OPERATION_TYPE} - ${env.POST_PROJECT_NAME} - Failure",
