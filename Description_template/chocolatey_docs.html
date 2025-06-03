@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chocolatey Package Manager</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+            animation: slideIn 0.8s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .header {
+            background: linear-gradient(135deg, #4a5568, #2d3748);
+            color: white;
+            padding: 40px;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .header::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: repeating-linear-gradient(
+                45deg,
+                transparent,
+                transparent 10px,
+                rgba(255,255,255,0.03) 10px,
+                rgba(255,255,255,0.03) 20px
+            );
+            animation: rotate 20s linear infinite;
+        }
+
+        @keyframes rotate {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            position: relative;
+            z-index: 1;
+        }
+
+        .header .subtitle {
+            font-size: 1.2em;
+            opacity: 0.9;
+            position: relative;
+            z-index: 1;
+        }
+
+        .content {
+            padding: 40px;
+        }
+
+        .section {
+            margin-bottom: 40px;
+            padding: 30px;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.08);
+            border-left: 5px solid #667eea;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .section:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.15);
+        }
+
+        .section h2 {
+            color: #4a5568;
+            font-size: 1.8em;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .icon {
+            width: 32px;
+            height: 32px;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+        }
+
+        .operations-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+        }
+
+        .operation-card {
+            background: linear-gradient(135deg, #f7fafc, #edf2f7);
+            padding: 25px;
+            border-radius: 12px;
+            border: 2px solid #e2e8f0;
+            transition: all 0.3s ease;
+        }
+
+        .operation-card:hover {
+            border-color: #667eea;
+            transform: scale(1.02);
+        }
+
+        .operation-title {
+            font-weight: bold;
+            color: #2d3748;
+            font-size: 1.1em;
+            margin-bottom: 8px;
+        }
+
+        .operation-desc {
+            color: #718096;
+            font-size: 0.9em;
+        }
+
+        .features-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+
+        .feature-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 15px;
+            background: linear-gradient(135deg, #f0fff4, #f7fafc);
+            border-radius: 10px;
+            border-left: 4px solid #48bb78;
+            transition: transform 0.2s ease;
+        }
+
+        .feature-item:hover {
+            transform: translateX(5px);
+        }
+
+        .checkmark {
+            color: #48bb78;
+            font-weight: bold;
+            font-size: 1.2em;
+        }
+
+        .examples {
+            background: #1a202c;
+            color: #f7fafc;
+            padding: 25px;
+            border-radius: 12px;
+            font-family: 'Courier New', monospace;
+        }
+
+        .example-item {
+            margin: 15px 0;
+            padding: 12px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            border-left: 3px solid #667eea;
+        }
+
+        .contact {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            text-align: center;
+            padding: 30px;
+            border-radius: 15px;
+            margin-top: 30px;
+        }
+
+        .contact a {
+            color: #ffd700;
+            text-decoration: none;
+            font-weight: bold;
+            transition: color 0.3s ease;
+        }
+
+        .contact a:hover {
+            color: #ffed4e;
+            text-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
+        }
+
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 2em;
+            }
+            
+            .content {
+                padding: 20px;
+            }
+            
+            .section {
+                padding: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🍫 Chocolatey Package Manager</h1>
+            <p class="subtitle">Déploiement automatisé de logiciels Windows avec Chocolatey et Ansible</p>
+        </div>
+
+        <div class="content">
+            <div class="section">
+                <h2><div class="icon">🎯</div> Fonctionnalités</h2>
+                <p>Installer/désinstaller des packages logiciels Windows via Chocolatey, déployer sur plusieurs environnements serveur, support pour des versions spécifiques ou les dernières versions, notifications automatisées et rapports détaillés.</p>
+            </div>
+
+            <div class="section">
+                <h2><div class="icon">⚙️</div> Opérations</h2>
+                <div class="operations-grid">
+                    <div class="operation-card">
+                        <div class="operation-title">Installation</div>
+                        <div class="operation-desc">present ou latest → utilise deploy_package_windows_chocolatey.yml</div>
+                    </div>
+                    <div class="operation-card">
+                        <div class="operation-title">Désinstallation</div>
+                        <div class="operation-desc">absent → utilise uninstall_package_windows_chocolatey.yml</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2><div class="icon">✨</div> Fonctionnalités Clés</h2>
+                <div class="features-list">
+                    <div class="feature-item">
+                        <span class="checkmark">✅</span>
+                        <span>Déploiement multi-serveur</span>
+                    </div>
+                    <div class="feature-item">
+                        <span class="checkmark">✅</span>
+                        <span>Installations avec version spécifique</span>
+                    </div>
+                    <div class="feature-item">
+                        <span class="checkmark">✅</span>
+                        <span>Support d'installation forcée</span>
+                    </div>
+                    <div class="feature-item">
+                        <span class="checkmark">✅</span>
+                        <span>Paramètres de package personnalisés</span>
+                    </div>
+                    <div class="feature-item">
+                        <span class="checkmark">✅</span>
+                        <span>Timeouts configurables</span>
+                    </div>
+                    <div class="feature-item">
+                        <span class="checkmark">✅</span>
+                        <span>Notifications par email</span>
+                    </div>
+                    <div class="feature-item">
+                        <span class="checkmark">✅</span>
+                        <span>Rapports détaillés</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2><div class="icon">💡</div> Exemples d'Usage</h2>
+                <div class="examples">
+                    <div class="example-item">
+                        <strong>Installer Chrome:</strong> googlechrome → present → Windows
+                    </div>
+                    <div class="example-item">
+                        <strong>Supprimer Firefox:</strong> firefox → absent → Windows
+                    </div>
+                    <div class="example-item">
+                        <strong>Version spécifique de Git:</strong> git v2.40.1 → present
+                    </div>
+                </div>
+            </div>
+
+            <div class="contact">
+                <h3>📞 Contact</h3>
+                <p>Équipe DevOps | <a href="mailto:l.kieran95@gmail.com">l.kieran95@gmail.com</a></p>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
