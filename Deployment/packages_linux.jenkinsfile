@@ -74,7 +74,7 @@ pipeline {
                     }
                     
                     // Set playbook (using the package_manager role)
-                    env.SELECTED_PLAYBOOK = 'linux_package_management.yml'
+                    env.SELECTED_PLAYBOOK = 'deploy_package_linux.yml'
                     
                     // Set final package state for reporting
                     env.FINAL_PACKAGE_STATE = params.PACKAGE_STATE
@@ -108,13 +108,6 @@ pipeline {
                         fi
                         
                         echo "Playbook ${env.SELECTED_PLAYBOOK} found"
-                        
-                        # Check if package_manager role exists
-                        if [ ! -d "/tmp/ansibleJenkins/ansible/roles/package_manager" ]; then
-                            echo "Warning: package_manager role not found at expected location"
-                            echo "Roles directory contents:"
-                            ls -la /tmp/ansibleJenkins/ansible/roles/ || echo "Roles directory not found"
-                        fi
                     """
                 }
             }
@@ -131,14 +124,13 @@ pipeline {
                         echo "Playbook: ${env.SELECTED_PLAYBOOK}"
                         
                         sh '''
-                            chmod 600 $SSH_PRIVATE_KEY_FILE
                             
                             echo "Executing Linux package management playbook..."
                             
                             # Build ansible command with required variables
                             ANSIBLE_CMD="ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \
                                 /tmp/ansibleJenkins/ansible/playbook/${SELECTED_PLAYBOOK} \
-                                -e target_hosts=${TARGET_SERVER} \
+                                -e host=${TARGET_SERVER} \
                                 -e package_name=${PACKAGE_NAME} \
                                 -e package_state=${PACKAGE_STATE}"
                             

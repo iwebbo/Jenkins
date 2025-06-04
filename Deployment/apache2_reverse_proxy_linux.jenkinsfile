@@ -1,0 +1,333 @@
+pipeline {
+    agent any
+    
+    environment {
+        ANSIBLE_HOST_KEY_CHECKING = 'False'
+        ANSIBLE_FORKS = '2'
+        ANSIBLE_CONFIG = '/tmp/ansibleJenkins/ansible/ansible.cfg'
+    }
+    
+    parameters {
+        choice(
+            name: 'TARGET_SERVER',
+            choices: [
+                'ReverseProxy',
+                'Linux',
+                'ServerVM1', 
+                'RaspberryPi2',
+                'all-linux',
+                'debian-servers',
+                'redhat-servers'
+            ],
+            description: 'Target server for Apache2 reverse proxy deployment'
+        )
+        string(
+            name: 'SERVER_NAME',
+            defaultValue: 'reverseproxy.local',
+            description: 'Server name for SSL certificate and virtual host (e.g.: reverseproxy.local, myapp.domain.com)'
+        )
+        string(
+            name: 'PROXY_PASS',
+            defaultValue: 'http://192.168.1.16:8123/',
+            description: 'Backend server URL to proxy requests to (e.g.: http://192.168.1.100:8080/)'
+        )
+        string(
+            name: 'HTTP_PORT',
+            defaultValue: '8080',
+            description: 'HTTP port for reverse proxy (default: 8080)'
+        )
+        string(
+            name: 'HTTPS_PORT',
+            defaultValue: '4443',
+            description: 'HTTPS port for reverse proxy (default: 4443)'
+        )
+        string(
+            name: 'SSL_CERT_FILE',
+            defaultValue: '/etc/apache2/certificates/reverseproxy.local.crt',
+            description: 'Path to SSL certificate file on target server'
+        )
+        string(
+            name: 'SSL_CERT_KEY_FILE',
+            defaultValue: '/etc/apache2/certificates/reverseproxy.local.key',
+            description: 'Path to SSL private key file on target server'
+        )
+        string(
+            name: 'SSL_CERT_CA_FILE',
+            defaultValue: '/etc/apache2/certificates/myCA.crt',
+            description: 'Path to SSL CA certificate file on target server'
+        )
+        booleanParam(
+            name: 'ENABLE_SSL',
+            defaultValue: true,
+            description: 'Enable SSL/HTTPS configuration (requires valid certificates)'
+        )
+        booleanParam(
+            name: 'UPDATE_CACHE',
+            defaultValue: true,
+            description: 'Update package cache before Apache2 installation (recommended)'
+        )
+        text(
+            name: 'EXTRA_VARS',
+            defaultValue: '',
+            description: 'Additional Ansible variables (format: key=value separated by spaces)'
+        )
+    }
+    
+    stages {
+        stage('Parameter Validation') {
+            steps {
+                script {
+                    echo "🔍 Validating Apache2 Reverse Proxy parameters..."
+                    
+                    // Server name validation
+                    if (params.SERVER_NAME.trim() == '') {
+                        error("Server name is required!")
+                    }
+                    
+                    // Proxy pass validation
+                    if (params.PROXY_PASS.trim() == '') {
+                        error("Proxy pass URL is required!")
+                    }
+                    
+                    // URL format validation
+                    if (!params.PROXY_PASS.startsWith('http://') && !params.PROXY_PASS.startsWith('https://')) {
+                        error("Proxy pass must be a valid URL starting with http:// or https://")
+                    }
+                    
+                    // Set operation type
+                    env.OPERATION_TYPE = 'CONFIGURE'
+                    
+                    // Set playbook for Apache2 reverse proxy
+                    env.SELECTED_PLAYBOOK = 'deploy_apache2_reverse_proxy.yml'
+                    
+                    // SSL configuration check
+                    if (params.ENABLE_SSL) {
+                        if (params.SSL_CERT_FILE.trim() == '' || params.SSL_CERT_KEY_FILE.trim() == '') {
+                            error("SSL certificate and key files are required when SSL is enabled!")
+                        }
+                    }
+                    
+                    echo "Parameter summary:"
+                    echo "   • Server Name: ${params.SERVER_NAME}"
+                    echo "   • Backend URL: ${params.PROXY_PASS}"
+                    echo "   • HTTP Port: ${params.HTTP_PORT}"
+                    echo "   • HTTPS Port: ${params.HTTPS_PORT}"
+                    echo "   • SSL Enabled: ${params.ENABLE_SSL}"
+                    echo "   • Target Server: ${params.TARGET_SERVER}"
+                    echo "   • Update Cache: ${params.UPDATE_CACHE}"
+                    echo "   • Playbook: ${env.SELECTED_PLAYBOOK}"
+                    
+                    if (params.ENABLE_SSL) {
+                        echo "   • SSL Certificate: ${params.SSL_CERT_FILE}"
+                        echo "   • SSL Key: ${params.SSL_CERT_KEY_FILE}"
+                        echo "   • SSL CA: ${params.SSL_CERT_CA_FILE}"
+                    }
+                }
+            }
+        }
+        
+        stage('Ansible Verification') {
+            steps {
+                script {
+                    // Check that Ansible is installed
+                    sh 'ansible --version'
+                    
+                    // Check that the playbook exists
+                    sh """
+                        if [ ! -f "/tmp/ansibleJenkins/ansible/playbook/${env.SELECTED_PLAYBOOK}" ]; then
+                            echo "Playbook ${env.SELECTED_PLAYBOOK} not found!"
+                            echo "Playbook directory contents:"
+                            ls -la /tmp/ansibleJenkins/ansible/playbook/ || echo "Directory not found"
+                            exit 1
+                        fi
+                        
+                        echo "Playbook ${env.SELECTED_PLAYBOOK} found"
+                    """
+                    
+                    // Verify apache2_reverse_proxy role exists
+                    sh """
+                        if [ ! -d "/tmp/ansibleJenkins/ansible/roles/apache2_reverse_proxy" ]; then
+                            echo "Apache2 reverse proxy role not found!"
+                            echo "Roles directory contents:"
+                            ls -la /tmp/ansibleJenkins/ansible/roles/ || echo "Roles directory not found"
+                            exit 1
+                        fi
+                        
+                        echo "Apache2 reverse proxy role found"
+                    """
+                }
+            }
+        }
+        
+        stage('Apache2 Reverse Proxy Configuration') {
+            steps {
+                script {
+                    withCredentials([file(credentialsId: 'ssh-key-ansible-user-secret-file', variable: 'SSH_PRIVATE_KEY_FILE')]) {
+                        echo "🚀 Starting Apache2 Reverse Proxy ${env.OPERATION_TYPE}..."
+                        echo "Server Name: ${params.SERVER_NAME}"
+                        echo "Backend URL: ${params.PROXY_PASS}"
+                        echo "Target Server: ${params.TARGET_SERVER}"
+                        echo "Playbook: ${env.SELECTED_PLAYBOOK}"
+                        
+                        sh '''
+                            
+                            echo "Executing Apache2 Reverse Proxy configuration playbook..."
+                            
+                            # Build ansible command with required variables
+                            ANSIBLE_CMD="ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \
+                                /tmp/ansibleJenkins/ansible/playbook/${SELECTED_PLAYBOOK} \
+                                -e host=${TARGET_SERVER} \
+                                -e server_name=${SERVER_NAME} \
+                                -e proxy_pass=${PROXY_PASS} \
+                                -e update_cache=${UPDATE_CACHE}"
+                            
+                            # Add HTTP port configuration
+                            if [ -n "${HTTP_PORT}" ] && [ "${HTTP_PORT}" != "8080" ]; then
+                                ANSIBLE_CMD="${ANSIBLE_CMD} -e http_port=${HTTP_PORT}"
+                            fi
+                            
+                            # Add HTTPS port configuration
+                            if [ -n "${HTTPS_PORT}" ] && [ "${HTTPS_PORT}" != "4443" ]; then
+                                ANSIBLE_CMD="${ANSIBLE_CMD} -e https_port=${HTTPS_PORT}"
+                            fi
+                            
+                            # Add SSL configuration if enabled
+                            if [ "${ENABLE_SSL}" = "true" ]; then
+                                ANSIBLE_CMD="${ANSIBLE_CMD} -e enable_ssl=true"
+                                ANSIBLE_CMD="${ANSIBLE_CMD} -e ssl_cert_file=${SSL_CERT_FILE}"
+                                ANSIBLE_CMD="${ANSIBLE_CMD} -e ssl_cert_key_file=${SSL_CERT_KEY_FILE}"
+                                ANSIBLE_CMD="${ANSIBLE_CMD} -e ssl_cert_CA_file=${SSL_CERT_CA_FILE}"
+                            else
+                                ANSIBLE_CMD="${ANSIBLE_CMD} -e enable_ssl=false"
+                            fi
+                            
+                            # Add extra variables if provided
+                            if [ -n "${EXTRA_VARS}" ]; then
+                                ANSIBLE_CMD="${ANSIBLE_CMD} -e ${EXTRA_VARS}"
+                            fi
+                            
+                            echo "Executing command: ${ANSIBLE_CMD}"
+                            eval ${ANSIBLE_CMD}
+                        '''
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            echo "Apache2 Reverse Proxy configuration completed"
+            
+            // Create detailed report
+            script {
+                def report = """
+                === APACHE2 REVERSE PROXY CONFIGURATION REPORT ===
+                Server Name: ${params.SERVER_NAME}
+                Backend URL: ${params.PROXY_PASS}
+                HTTP Port: ${params.HTTP_PORT}
+                HTTPS Port: ${params.HTTPS_PORT}
+                SSL Enabled: ${params.ENABLE_SSL}
+                SSL Certificate: ${params.ENABLE_SSL ? params.SSL_CERT_FILE : 'N/A'}
+                SSL Key File: ${params.ENABLE_SSL ? params.SSL_CERT_KEY_FILE : 'N/A'}
+                SSL CA File: ${params.ENABLE_SSL ? params.SSL_CERT_CA_FILE : 'N/A'}
+                Operation: ${env.OPERATION_TYPE ?: 'Not defined'}
+                Target Server: ${params.TARGET_SERVER}
+                Update Cache: ${params.UPDATE_CACHE}
+                Extra Variables: ${params.EXTRA_VARS ?: 'None'}
+                Playbook: ${env.SELECTED_PLAYBOOK ?: 'Not defined'}
+                Build: #${env.BUILD_NUMBER}
+                Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+                Status: ${currentBuild.currentResult}
+                ====================================================
+                """
+                writeFile file: 'apache2_reverse_proxy_report.txt', text: report
+                archiveArtifacts artifacts: 'apache2_reverse_proxy_report.txt', allowEmptyArchive: true
+            }
+        }
+        success {
+            script {
+                echo "Apache2 Reverse Proxy configuration for '${params.SERVER_NAME}' completed successfully!"
+                
+                currentBuild.description = "${env.OPERATION_TYPE} ${params.SERVER_NAME} → ${params.TARGET_SERVER}"
+                
+                // Create email body with formatting
+                def emailBody = """
+                🔧 APACHE2 REVERSE PROXY - SUCCESS
+
+                Server Name: ${params.SERVER_NAME}
+                Backend URL: ${params.PROXY_PASS}
+                HTTP Port: ${params.HTTP_PORT}
+                HTTPS Port: ${params.HTTPS_PORT}
+                SSL Enabled: ${params.ENABLE_SSL}
+                Target Server: ${params.TARGET_SERVER}
+                Operation: ${env.OPERATION_TYPE}
+                Build: #${env.BUILD_NUMBER}
+                Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+
+                📊 Build details: ${env.BUILD_URL}
+
+                Configuration used:
+                - Update Cache: ${params.UPDATE_CACHE}
+                - Extra Variables: ${params.EXTRA_VARS ?: 'None'}
+                - Playbook executed: ${env.SELECTED_PLAYBOOK}
+                
+                ${params.ENABLE_SSL ? """
+                SSL Configuration:
+                - Certificate: ${params.SSL_CERT_FILE}
+                - Private Key: ${params.SSL_CERT_KEY_FILE}
+                - CA Certificate: ${params.SSL_CERT_CA_FILE}
+                """ : 'SSL: Disabled'}
+
+                ✅ Apache2 Reverse Proxy is now configured and ready to serve requests.
+                
+                Access URLs:
+                - HTTP: http://${params.SERVER_NAME}:${params.HTTP_PORT}
+                ${params.ENABLE_SSL ? "- HTTPS: https://${params.SERVER_NAME}:${params.HTTPS_PORT}" : ''}
+                """
+                
+                mail to: 'l.kieran95@gmail.com',
+                    subject: "[Jenkins] Apache2 Reverse Proxy Configuration - ${params.SERVER_NAME} - Success",
+                    body: emailBody
+            }
+        }
+        failure {
+            script {
+                echo "Failed to configure Apache2 Reverse Proxy for '${params.SERVER_NAME}'"
+                
+                currentBuild.description = "${env.OPERATION_TYPE} ${params.SERVER_NAME} → FAILED"
+                
+                // Create failure email body
+                def emailBody = """
+                ❌ APACHE2 REVERSE PROXY - FAILURE
+
+                Server Name: ${params.SERVER_NAME}
+                Backend URL: ${params.PROXY_PASS}
+                Target Server: ${params.TARGET_SERVER}
+                Operation: ${env.OPERATION_TYPE}
+                Build: #${env.BUILD_NUMBER}
+                Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+
+                Error logs: ${env.BUILD_URL}console
+
+                Configuration attempted:
+                - HTTP Port: ${params.HTTP_PORT}
+                - HTTPS Port: ${params.HTTPS_PORT}
+                - SSL Enabled: ${params.ENABLE_SSL}
+                - Update Cache: ${params.UPDATE_CACHE}
+                - Extra Variables: ${params.EXTRA_VARS ?: 'None'}
+                - Playbook attempted: ${env.SELECTED_PLAYBOOK}
+
+                Please check the logs for more details.
+                """
+                
+                mail to: 'l.kieran95@gmail.com',
+                    subject: "[Jenkins] Apache2 Reverse Proxy Configuration - ${params.SERVER_NAME} - Failure",
+                    body: emailBody
+            }
+        }
+        cleanup {
+            cleanWs()
+        }
+    }
+} 
