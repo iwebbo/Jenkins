@@ -1,0 +1,311 @@
+pipeline {
+    agent any
+    
+    environment {
+        ANSIBLE_HOST_KEY_CHECKING = 'False'
+        ANSIBLE_FORKS = '2'
+        ANSIBLE_CONFIG = '/tmp/ansibleJenkins/ansible/ansible.cfg'
+    }
+    
+    parameters {
+        choice(
+            name: 'TARGET_SERVER',
+            choices: [
+                'WindowsServer1',
+                'WindowsServer2',
+                'WindowsDesktop1',
+                'all-windows',
+                'windows-servers',
+                'windows-workstations'
+            ],
+            description: 'Target Windows server for Ollama models pull'
+        )
+        choice(
+            name: 'OPERATION_TYPE',
+            choices: [
+                'PULL_MODELS',
+                'LIST_MODELS',
+                'REMOVE_MODELS'
+            ],
+            description: 'Operation to perform on Ollama models'
+        )
+        text(
+            name: 'OLLAMA_MODELS',
+            defaultValue: 'qwen2.5-coder:32b\nqwen2.5-coder:14b\nllama3.2:3b',
+            description: 'List of Ollama models to pull (one per line). Examples:\n- qwen2.5-coder:32b\n- llama3.2:3b\n- mistral:7b\n- codellama:13b'
+        )
+        booleanParam(
+            name: 'FORCE_PULL',
+            defaultValue: false,
+            description: 'Force pull models even if they already exist'
+        )
+        booleanParam(
+            name: 'PARALLEL_PULL',
+            defaultValue: false,
+            description: 'Pull models in parallel (faster but uses more resources)'
+        )
+        string(
+            name: 'TIMEOUT_MINUTES',
+            defaultValue: '60',
+            description: 'Timeout in minutes for each model pull operation (default: 60)'
+        )
+        text(
+            name: 'EXTRA_VARS',
+            defaultValue: '',
+            description: 'Additional Ansible variables (format: key=value separated by spaces)'
+        )
+    }
+    
+    stages {
+        stage('Parameter Validation') {
+            steps {
+                script {
+                    echo "🔍 Validating Ollama Models parameters..."
+                    
+                    // Models validation
+                    if (params.OLLAMA_MODELS.trim() == '') {
+                        error("At least one Ollama model is required!")
+                    }
+                    
+                    // Parse models list
+                    def modelsList = params.OLLAMA_MODELS.split('\n').findAll { it.trim() != '' }
+                    env.MODELS_COUNT = modelsList.size().toString()
+                    
+                    // Validate each model name format
+                    modelsList.each { model ->
+                        def trimmedModel = model.trim()
+                        if (!trimmedModel.matches(/^[a-zA-Z0-9._-]+(:[\w.-]+)?$/)) {
+                            error("Invalid model name format: ${trimmedModel}. Expected format: model:tag or model")
+                        }
+                    }
+                    
+                    // Timeout validation
+                    try {
+                        def timeout = Integer.parseInt(params.TIMEOUT_MINUTES)
+                        if (timeout <= 0 || timeout > 480) {
+                            error("Timeout must be between 1 and 480 minutes")
+                        }
+                    } catch (NumberFormatException e) {
+                        error("Timeout must be a valid number")
+                    }
+                    
+                    // Set operation type
+                    env.OPERATION_TYPE = params.OPERATION_TYPE
+                    
+                    // Set playbook based on operation
+                    switch(params.OPERATION_TYPE) {
+                        case 'PULL_MODELS':
+                            env.SELECTED_PLAYBOOK = 'deploy_model_ollama_windows.yml'
+                            break
+                        case 'LIST_MODELS':
+                            env.SELECTED_PLAYBOOK = 'list_ollama_model.yml'
+                            break
+                        case 'REMOVE_MODELS':
+                            env.SELECTED_PLAYBOOK = 'remove_ollama_models.yml'
+                            break
+                        default:
+                            error("Unknown operation type: ${params.OPERATION_TYPE}")
+                    }
+                    
+                    echo "Parameter summary:"
+                    echo "   • Operation: ${env.OPERATION_TYPE}"
+                    echo "   • Target Server: ${params.TARGET_SERVER}"
+                    echo "   • Models Count: ${env.MODELS_COUNT}"
+                    echo "   • Force Pull: ${params.FORCE_PULL}"
+                    echo "   • Parallel Pull: ${params.PARALLEL_PULL}"
+                    echo "   • Timeout: ${params.TIMEOUT_MINUTES} minutes"
+                    echo "   • Playbook: ${env.SELECTED_PLAYBOOK}"
+                    
+                    echo "Models to process:"
+                    modelsList.each { model ->
+                        echo "   • ${model.trim()}"
+                    }
+                }
+            }
+        }
+        
+        stage('Ansible Verification') {
+            steps {
+                script {
+                    // Check that Ansible is installed
+                    sh 'ansible --version'
+                    
+                    // Check that the playbook exists
+                    sh """
+                        if [ ! -f "/tmp/ansibleJenkins/ansible/playbook/${env.SELECTED_PLAYBOOK}" ]; then
+                            echo "Playbook ${env.SELECTED_PLAYBOOK} not found!"
+                            echo "Playbook directory contents:"
+                            ls -la /tmp/ansibleJenkins/ansible/playbook/ || echo "Directory not found"
+                            exit 1
+                        fi
+                        
+                        echo "Playbook ${env.SELECTED_PLAYBOOK} found"
+                    """
+                }
+            }
+        }
+        
+        stage('Ollama Models Management') {
+            steps {
+                script {
+                    withCredentials([file(credentialsId: 'ssh-key-ansible-user-secret-file', variable: 'SSH_PRIVATE_KEY_FILE')]) {
+                        ansiColor('xterm') {
+                            echo "🚀 Starting Ollama Models ${env.OPERATION_TYPE}..."
+                            echo "Target Server: ${params.TARGET_SERVER}"
+                            echo "Models Count: ${env.MODELS_COUNT}"
+                            echo "Playbook: ${env.SELECTED_PLAYBOOK}"
+                        
+                        // Create temporary file with models list
+                        def modelsList = params.OLLAMA_MODELS.split('\n').findAll { it.trim() != '' }
+                        def modelsJson = modelsList.collect { "\"${it.trim()}\"" }.join(',')
+                        
+                        sh """
+                            echo "Executing Ollama Models management playbook..."
+                            
+                            # Build ansible command with required variables
+                            ANSIBLE_CMD="ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \\
+                                /tmp/ansibleJenkins/ansible/playbook/${SELECTED_PLAYBOOK} \\
+                                -e host=${TARGET_SERVER} \\
+                                -e operation_type=${OPERATION_TYPE} \\
+                                -e 'ollama_models=[${modelsJson}]' \\
+                                -e force_pull=${FORCE_PULL} \\
+                                -e parallel_pull=${PARALLEL_PULL} \\
+                                -e timeout_minutes=${TIMEOUT_MINUTES}"
+                            
+                            # Add extra variables if provided
+                            if [ -n "${EXTRA_VARS}" ]; then
+                                ANSIBLE_CMD="\${ANSIBLE_CMD} -e ${EXTRA_VARS}"
+                            fi
+                            
+                            # Add verbose output for debugging
+                            ANSIBLE_CMD="\${ANSIBLE_CMD} -v"
+                            
+                            echo "Executing command: \${ANSIBLE_CMD}"
+                            eval \${ANSIBLE_CMD}
+                        """
+                    }
+                }
+            }
+          }
+        }
+    }
+    
+    post {
+        always {
+            echo "Ollama Models ${env.OPERATION_TYPE} completed"
+            
+            // Create detailed report
+            script {
+                def modelsList = params.OLLAMA_MODELS.split('\n').findAll { it.trim() != '' }
+                def modelsReport = modelsList.collect { "  - ${it.trim()}" }.join('\n')
+                
+                def report = """
+                === OLLAMA MODELS MANAGEMENT REPORT ===
+                Operation: ${env.OPERATION_TYPE}
+                Target Server: ${params.TARGET_SERVER}
+                Models Count: ${env.MODELS_COUNT}
+                Force Pull: ${params.FORCE_PULL}
+                Parallel Pull: ${params.PARALLEL_PULL}
+                Timeout: ${params.TIMEOUT_MINUTES} minutes
+                
+                Models processed:
+                ${modelsReport}
+                
+                Extra Variables: ${params.EXTRA_VARS ?: 'None'}
+                Playbook: ${env.SELECTED_PLAYBOOK ?: 'Not defined'}
+                Build: #${env.BUILD_NUMBER}
+                Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+                Status: ${currentBuild.currentResult}
+                ==========================================
+                """
+                writeFile file: 'ollama_models_report.txt', text: report
+                archiveArtifacts artifacts: 'ollama_models_report.txt', allowEmptyArchive: true
+            }
+        }
+        success {
+            script {
+                def modelsList = params.OLLAMA_MODELS.split('\n').findAll { it.trim() != '' }
+                def modelsCount = modelsList.size()
+                
+                echo "Ollama Models ${env.OPERATION_TYPE} for ${modelsCount} model(s) completed successfully!"
+                
+                currentBuild.description = "${env.OPERATION_TYPE} ${modelsCount} model(s) → ${params.TARGET_SERVER}"
+                
+                // Create email body with formatting
+                def modelsReport = modelsList.collect { "  • ${it.trim()}" }.join('\n')
+                
+                def emailBody = """
+                🤖 OLLAMA MODELS MANAGEMENT - SUCCESS
+
+                Operation: ${env.OPERATION_TYPE}
+                Target Server: ${params.TARGET_SERVER}
+                Models Count: ${modelsCount}
+                Force Pull: ${params.FORCE_PULL}
+                Parallel Pull: ${params.PARALLEL_PULL}
+                Timeout: ${params.TIMEOUT_MINUTES} minutes
+                Build: #${env.BUILD_NUMBER}
+                Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+
+                📊 Build details: ${env.BUILD_URL}
+
+                Models processed:
+                ${modelsReport}
+
+                Configuration used:
+                - Extra Variables: ${params.EXTRA_VARS ?: 'None'}
+                - Playbook executed: ${env.SELECTED_PLAYBOOK}
+
+                ✅ Ollama models ${env.OPERATION_TYPE.toLowerCase()} operation completed successfully.
+                """
+                
+                mail to: 'l.kieran95@gmail.com',
+                    subject: "[Jenkins] Ollama Models ${env.OPERATION_TYPE} - ${params.TARGET_SERVER} - Success",
+                    body: emailBody
+            }
+        }
+        failure {
+            script {
+                def modelsList = params.OLLAMA_MODELS.split('\n').findAll { it.trim() != '' }
+                def modelsCount = modelsList.size()
+                
+                echo "Failed to ${env.OPERATION_TYPE} Ollama models on '${params.TARGET_SERVER}'"
+                
+                currentBuild.description = "${env.OPERATION_TYPE} ${modelsCount} model(s) → FAILED"
+                
+                // Create failure email body
+                def modelsReport = modelsList.collect { "  • ${it.trim()}" }.join('\n')
+                
+                def emailBody = """
+                ❌ OLLAMA MODELS MANAGEMENT - FAILURE
+
+                Operation: ${env.OPERATION_TYPE}
+                Target Server: ${params.TARGET_SERVER}
+                Models Count: ${modelsCount}
+                Build: #${env.BUILD_NUMBER}
+                Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+
+                Error logs: ${env.BUILD_URL}console
+
+                Models attempted:
+                ${modelsReport}
+
+                Configuration attempted:
+                - Force Pull: ${params.FORCE_PULL}
+                - Parallel Pull: ${params.PARALLEL_PULL}
+                - Timeout: ${params.TIMEOUT_MINUTES} minutes
+                - Extra Variables: ${params.EXTRA_VARS ?: 'None'}
+                - Playbook attempted: ${env.SELECTED_PLAYBOOK}
+
+                Please check the logs for more details.
+                """
+                
+                mail to: 'l.kieran95@gmail.com',
+                    subject: "[Jenkins] Ollama Models ${env.OPERATION_TYPE} - ${params.TARGET_SERVER} - Failure",
+                    body: emailBody
+            }
+        }
+        cleanup {
+            cleanWs()
+        }
+    }
+}

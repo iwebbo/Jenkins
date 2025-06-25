@@ -1,0 +1,85 @@
+<div style="font-family: Arial, sans-serif; font-size: 13px; line-height: 1.4; max-width: 600px;">
+    
+    <h3 style="color: #2c3e50; margin: 0 0 5px 0; font-size: 18px;">🤖 Ollama Models Management Pipeline</h3>
+    <p style="color: #7f8c8d; margin: 0 0 20px 0; font-style: italic;">Gestion complète des modèles Ollama sur serveurs Windows via Ansible</p>
+    
+    <div style="background: #f8f9fa; padding: 15px; border-left: 4px solid #3498db; margin: 15px 0;">
+        <h4 style="margin: 0 0 10px 0; color: #2c3e50; font-size: 14px;">🔧 Opérations disponibles</h4>
+        <ul style="margin: 0; padding-left: 20px;">
+            <li><strong>PULL_MODELS</strong> - Télécharger des modèles Ollama</li>
+            <li><strong>LIST_MODELS</strong> - Lister les modèles installés</li>
+            <li><strong>REMOVE_MODELS</strong> - Supprimer des modèles existants</li>
+        </ul>
+    </div>
+    
+    <div style="background: #f8f9fa; padding: 15px; border-left: 4px solid #e74c3c; margin: 15px 0;">
+        <h4 style="margin: 0 0 10px 0; color: #2c3e50; font-size: 14px;">🎯 Serveurs cibles</h4>
+        <ul style="margin: 0; padding-left: 20px;">
+            <li><code style="background: #ecf0f1; padding: 2px 4px;">WindowsServer1</code> - Serveur principal</li>
+            <li><code style="background: #ecf0f1; padding: 2px 4px;">WindowsServer2</code> - Serveur secondaire</li>
+            <li><code style="background: #ecf0f1; padding: 2px 4px;">WindowsDesktop1</code> - Poste de travail</li>
+            <li><code style="background: #ecf0f1; padding: 2px 4px;">all-windows</code> - Tous les serveurs Windows</li>
+            <li><code style="background: #ecf0f1; padding: 2px 4px;">windows-servers</code> - Groupe serveurs</li>
+            <li><code style="background: #ecf0f1; padding: 2px 4px;">windows-workstations</code> - Groupe postes</li>
+        </ul>
+    </div>
+    
+    <div style="background: #f8f9fa; padding: 15px; border-left: 4px solid #27ae60; margin: 15px 0;">
+        <h4 style="margin: 0 0 10px 0; color: #2c3e50; font-size: 14px;">⚙️ Paramètres configurables</h4>
+        <ul style="margin: 0; padding-left: 20px;">
+            <li><code style="background: #ecf0f1; padding: 2px 4px;">OLLAMA_MODELS</code> - Liste des modèles (un par ligne)</li>
+            <li><code style="background: #ecf0f1; padding: 2px 4px;">FORCE_PULL</code> - Forcer le téléchargement (true/false)</li>
+            <li><code style="background: #ecf0f1; padding: 2px 4px;">PARALLEL_PULL</code> - Téléchargement parallèle (true/false)</li>
+            <li><code style="background: #ecf0f1; padding: 2px 4px;">TIMEOUT_MINUTES</code> - Timeout par modèle (1-480 min)</li>
+            <li><code style="background: #ecf0f1; padding: 2px 4px;">EXTRA_VARS</code> - Variables Ansible supplémentaires</li>
+        </ul>
+    </div>
+    
+    <div style="background: #f8f9fa; padding: 15px; border-left: 4px solid #f39c12; margin: 15px 0;">
+        <h4 style="margin: 0 0 10px 0; color: #2c3e50; font-size: 14px;">🚀 Fonctionnalités avancées</h4>
+        <ul style="margin: 0; padding-left: 20px;">
+            <li><strong>Validation automatique</strong> - Vérification des paramètres</li>
+            <li><strong>Gestion multi-serveurs</strong> - Support des groupes Ansible</li>
+            <li><strong>Timeouts configurables</strong> - Protection contre les blocages</li>
+            <li><strong>Téléchargement parallèle</strong> - Optimisation des performances</li>
+            <li><strong>Notifications email</strong> - Alertes de succès/échec</li>
+            <li><strong>Rapports détaillés</strong> - Archives des opérations</li>
+        </ul>
+    </div>
+    
+    <div style="background: #f8f9fa; padding: 15px; border-left: 4px solid #9b59b6; margin: 15px 0;">
+        <h4 style="margin: 0 0 10px 0; color: #2c3e50; font-size: 14px;">💡 Exemples de modèles supportés</h4>
+        <div style="font-family: monospace; background: #ecf0f1; padding: 10px; border-radius: 3px;">
+            <div style="margin: 3px 0;">▶ <span style="color: #3498db;">qwen2.5-coder:32b</span> - Modèle de code avancé</div>
+            <div style="margin: 3px 0;">▶ <span style="color: #3498db;">qwen2.5-coder:14b</span> - Version allégée</div>
+            <div style="margin: 3px 0;">▶ <span style="color: #3498db;">llama3.2:3b</span> - Modèle général compact</div>
+            <div style="margin: 3px 0;">▶ <span style="color: #3498db;">mistral:7b</span> - Modèle polyvalent</div>
+            <div style="margin: 3px 0;">▶ <span style="color: #3498db;">codellama:13b</span> - Spécialisé programmation</div>
+        </div>
+    </div>
+    
+    <div style="background: #f8f9fa; padding: 15px; border-left: 4px solid #e67e22; margin: 15px 0;">
+        <h4 style="margin: 0 0 10px 0; color: #2c3e50; font-size: 14px;">🔄 Workflow automatisé</h4>
+        <div style="font-size: 12px;">
+            <strong>1. Validation</strong> → Vérification des paramètres et formats<br>
+            <strong>2. Vérification</strong> → Contrôle Ansible et playbooks<br>
+            <strong>3. Exécution</strong> → Déploiement via Ansible sur cibles<br>
+            <strong>4. Rapport</strong> → Génération et archivage des résultats<br>
+            <strong>5. Notification</strong> → Email de confirmation/erreur
+        </div>
+    </div>
+    
+    <hr style="border: none; border-top: 1px solid #bdc3c7; margin: 20px 0;">
+    
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <p style="color: #7f8c8d; margin: 0; font-size: 12px;">
+            <strong>📧 Contact:</strong> DevOps Team | 
+            <a href="mailto:l.kieran95@gmail.com" style="color: #3498db;">l.kieran95@gmail.com</a>
+        </p>
+        <div style="font-size: 11px; color: #95a5a6;">
+            <span style="background: #ecf0f1; padding: 2px 6px; border-radius: 3px;">Ansible Pipeline</span>
+            <span style="background: #ecf0f1; padding: 2px 6px; border-radius: 3px; margin-left: 5px;">Windows Support</span>
+        </div>
+    </div>
+    
+</div>
