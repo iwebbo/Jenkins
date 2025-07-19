@@ -11,145 +11,34 @@ pipeline {
         choice(
             name: 'TARGET_SERVER',
             choices: [
-                'Linux',
                 'ServerVM1', 
                 'RaspberryPi2',
                 'ReverseProxy',
-                'all-linux',
-                'debian-servers',
-                'redhat-servers'
+                'Linux'
             ],
             description: 'Target server for deployment'
-        )
-        string(
-            name: 'PACKAGE_NAME',
-            defaultValue: '',
-            description: 'Package name to install/uninstall (e.g.: nginx, docker.io, git)'
-        )
-        string(
-            name: 'PACKAGE_VERSION',
-            defaultValue: '',
-            description: 'Specific package version (optional - leave empty for latest version)'
-        )
-        choice(
-            name: 'PACKAGE_STATE',
-            choices: ['present', 'absent', 'latest'],
-            description: 'Desired package state'
-        )
-        booleanParam(
-            name: 'UPDATE_CACHE',
-            defaultValue: true,
-            description: 'Update package cache before installation (recommended)'
-        )
-        string(
-            name: 'CACHE_VALID_TIME',
-            defaultValue: '3600',
-            description: 'Cache valid time in seconds (3600=1h)'
-        )
-        text(
-            name: 'EXTRA_VARS',
-            defaultValue: '',
-            description: 'Additional Ansible variables (format: key=value separated by spaces)'
         )
     }
     
     stages {
-        stage('Parameter Validation') {
+        stage('Vérification Ansible') {
             steps {
                 script {
-                    echo "🔍 Validating Linux package parameters..."
-                    
-                    // Package name validation
-                    if (params.PACKAGE_NAME.trim() == '') {
-                        error("Package name is required!")
-                    }
-                    
-                    // Determine operation type based on package state
-                    if (params.PACKAGE_STATE == 'present' || params.PACKAGE_STATE == 'latest') {
-                        env.OPERATION_TYPE = 'INSTALL'
-                    } else if (params.PACKAGE_STATE == 'absent') {
-                        env.OPERATION_TYPE = 'UNINSTALL'
-                    } else {
-                        error("Invalid package state: ${params.PACKAGE_STATE}")
-                    }
-                    
-                    // Set playbook (using the package_manager role)
-                    env.SELECTED_PLAYBOOK = 'deploy_package_linux.yml'
-                    
-                    // Set final package state for reporting
-                    env.FINAL_PACKAGE_STATE = params.PACKAGE_STATE
-                    
-                    echo "Parameter summary:"
-                    echo "   • Package: ${params.PACKAGE_NAME}"
-                    echo "   • Version: ${params.PACKAGE_VERSION ?: 'Latest'}"
-                    echo "   • Action: ${params.PACKAGE_STATE}"
-                    echo "   • Operation: ${env.OPERATION_TYPE}"
-                    echo "   • Server: ${params.TARGET_SERVER}"
-                    echo "   • Update Cache: ${params.UPDATE_CACHE}"
-                    echo "   • Cache Valid Time: ${params.CACHE_VALID_TIME}s"
-                    echo "   • Playbook: ${env.SELECTED_PLAYBOOK}"
-                }
-            }
-        }
-        
-        stage('Ansible Verification') {
-            steps {
-                script {
-                    // Check that Ansible is installed
+                    // Vérifier qu'Ansible est installé
                     sh 'ansible --version'
                     
-                    // Check that the playbook exists
-                    sh """
-                        if [ ! -f "/tmp/ansibleJenkins/ansible/playbook/${env.SELECTED_PLAYBOOK}" ]; then
-                            echo "Playbook ${env.SELECTED_PLAYBOOK} not found!"
-                            echo "Playbook directory contents:"
-                            ls -la /tmp/ansibleJenkins/ansible/playbook/ || echo "Directory not found"
-                            exit 1
-                        fi
-                        
-                        echo "Playbook ${env.SELECTED_PLAYBOOK} found"
-                    """
+                    // Vérifier la syntaxe du playbook
+                    // sh "ansible-playbook --syntax-check -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini /tmp/ansibleJenkins/ansible/playbook/update_system_linux.yml"
                 }
             }
         }
         
-        stage('Linux Package Manager Execution') {
+        stage('Exécution du Playbook') {
             steps {
                 script {
-                    withCredentials([file(credentialsId: 'ssh-key-ansible-user-secret-file', variable: 'SSH_PRIVATE_KEY_FILE')]) {
-                        echo "🚀 Starting Linux package ${env.OPERATION_TYPE}..."
-                        echo "Package: ${params.PACKAGE_NAME}"
-                        echo "Action: ${params.PACKAGE_STATE} (${env.OPERATION_TYPE})"
-                        echo "Server: ${params.TARGET_SERVER}"
-                        echo "Playbook: ${env.SELECTED_PLAYBOOK}"
-                        
+                    withCredentials([file(credentialsId: 'ssh-key-ansible-user-secret-file', variable: 'SSH_KEY_FILE')]) {
                         sh '''
-                            
-                            echo "Executing Linux package management playbook..."
-                            
-                            # Build ansible command with required variables
-                            ANSIBLE_CMD="ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \
-                                /tmp/ansibleJenkins/ansible/playbook/${SELECTED_PLAYBOOK} \
-                                -e host=${TARGET_SERVER} \
-                                -e package_name=${PACKAGE_NAME} \
-                                -e package_state=${PACKAGE_STATE}"
-                            
-                            # Add optional package version if provided
-                            if [ -n "${PACKAGE_VERSION}" ]; then
-                                ANSIBLE_CMD="${ANSIBLE_CMD} -e package_version=${PACKAGE_VERSION}"
-                            fi
-                            
-                            # Add cache settings
-                            ANSIBLE_CMD="${ANSIBLE_CMD} -e update_cache=${UPDATE_CACHE}"
-                            ANSIBLE_CMD="${ANSIBLE_CMD} -e cache_valid_time=${CACHE_VALID_TIME}"
-                            
-                            # Add extra variables if provided
-                            if [ -n "${EXTRA_VARS}" ]; then
-                                ANSIBLE_CMD="${ANSIBLE_CMD} -e ${EXTRA_VARS}"
-                            fi
-                            
-                            echo "Executing command: ${ANSIBLE_CMD}"
-                            eval ${ANSIBLE_CMD}
+                            ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini /tmp/ansibleJenkins/ansible/playbook/update_system_linux.yml -e HOST=${TARGET_SERVER}
                         '''
                     }
                 }
@@ -159,99 +48,110 @@ pipeline {
     
     post {
         always {
-            echo "Linux package management completed"
-            
-            // Create detailed report
             script {
+                // =================================================================
+                // VARIABLES GLOBALES POUR LA MISE À JOUR SYSTÈME
+                // =================================================================
+                
+                env.POST_OPERATION_TYPE = 'SYSTEM UPDATE'
+                env.POST_TARGET_SERVER = params.TARGET_SERVER
+                env.POST_PLAYBOOK_NAME = 'update_system_linux.yml'
+                env.POST_ANSIBLE_INVENTORY = '/tmp/ansibleJenkins/ansible/inventory/hosts.ini'
+                
+                // Configuration email
+                env.POST_EMAIL_RECIPIENT = 'l.kieran95@gmail.com'
+                env.POST_EMAIL_SUBJECT_PREFIX = '[Ansible System Update]'
+                
+                // Timestamp de l'exécution
+                env.POST_BUILD_TIMESTAMP = new Date().format('yyyy-MM-dd HH:mm:ss')
+                
+                // =================================================================
+                // GÉNÉRATION DU RAPPORT
+                // =================================================================
+                
+                echo "Mise à jour système terminée"
+                
                 def report = """
-                === LINUX PACKAGE MANAGER REPORT ===
-                Package: ${params.PACKAGE_NAME}
-                Version: ${params.PACKAGE_VERSION ?: 'Latest'}
-                Final State: ${env.FINAL_PACKAGE_STATE ?: 'Not defined'}
-                Operation: ${env.OPERATION_TYPE ?: 'Not defined'}
-                Target Server: ${params.TARGET_SERVER}
-                Update Cache: ${params.UPDATE_CACHE}
-                Cache Valid Time: ${params.CACHE_VALID_TIME} seconds
-                Extra Variables: ${params.EXTRA_VARS ?: 'None'}
-                Playbook: ${env.SELECTED_PLAYBOOK ?: 'Not defined'}
+                === RAPPORT DE MISE À JOUR SYSTÈME ===
+                Serveur cible: ${env.POST_TARGET_SERVER}
+                Playbook: ${env.POST_PLAYBOOK_NAME}
+                Inventaire: ${env.POST_ANSIBLE_INVENTORY}
                 Build: #${env.BUILD_NUMBER}
-                Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
-                Status: ${currentBuild.currentResult}
-                =====================================
+                Date: ${env.POST_BUILD_TIMESTAMP}
+                Statut: ${currentBuild.currentResult}
+                Durée: ${currentBuild.durationString}
+                
+                URL du build: ${env.BUILD_URL}
+                Logs console: ${env.BUILD_URL}console
+                ==========================================
                 """
-                writeFile file: 'linux_package_report.txt', text: report
-                archiveArtifacts artifacts: 'linux_package_report.txt', allowEmptyArchive: true
+                
+                writeFile file: "system_update_report.txt", text: report
+                archiveArtifacts artifacts: "system_update_report.txt", allowEmptyArchive: true
             }
         }
+        
         success {
             script {
-                echo "Package '${params.PACKAGE_NAME}' ${params.PACKAGE_STATE} completed successfully!"
+                echo "Mise à jour système réussie sur '${env.POST_TARGET_SERVER}'"
                 
-                currentBuild.description = "${env.OPERATION_TYPE} ${params.PACKAGE_NAME} → ${params.TARGET_SERVER}"
+                // Description du build
+                currentBuild.description = "Mise à jour système sur ${env.POST_TARGET_SERVER} - Réussie"
                 
-                // Create email body with formatting
+                // Corps de l'email de succès
                 def emailBody = """
-                🐧 LINUX PACKAGE MANAGER - SUCCESS
+                🚀 MISE À JOUR SYSTÈME - SUCCÈS
 
-                Package: ${params.PACKAGE_NAME}
-                Version: ${params.PACKAGE_VERSION ?: 'Latest'}
-                Action: ${params.PACKAGE_STATE} (${env.OPERATION_TYPE})
-                Server: ${params.TARGET_SERVER}
-                Final State: ${env.FINAL_PACKAGE_STATE ?: 'Not defined'}
+                Serveur cible: ${env.POST_TARGET_SERVER}
+                Playbook exécuté: ${env.POST_PLAYBOOK_NAME}
                 Build: #${env.BUILD_NUMBER}
-                Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+                Date: ${env.POST_BUILD_TIMESTAMP}
+                Durée: ${currentBuild.durationString}
 
-                📊 Build details: ${env.BUILD_URL}
+                📊 Détails du build: ${env.BUILD_URL}
 
-                Configuration used:
-                - Update Cache: ${params.UPDATE_CACHE}
-                - Cache Valid Time: ${params.CACHE_VALID_TIME} seconds
-                - Extra Variables: ${params.EXTRA_VARS ?: 'None'}
-                - Playbook executed: ${env.SELECTED_PLAYBOOK}
-
-                ✅ The operation completed successfully.
+                ✅ La mise à jour système s'est terminée avec succès.
+                
+                Le serveur ${env.POST_TARGET_SERVER} a été mis à jour et est maintenant prêt.
                 """
                 
-                mail to: 'l.kieran95@gmail.com',
-                    subject: "[Jenkins] Linux Package ${env.OPERATION_TYPE} - ${params.PACKAGE_NAME} - Success",
+                mail to: env.POST_EMAIL_RECIPIENT,
+                    subject: "${env.POST_EMAIL_SUBJECT_PREFIX} ${env.POST_TARGET_SERVER} - Succès",
                     body: emailBody
             }
         }
+        
         failure {
             script {
-                echo "Failed to manage package '${params.PACKAGE_NAME}'"
+                echo "Échec de la mise à jour système sur '${env.POST_TARGET_SERVER}'"
                 
-                currentBuild.description = "${env.OPERATION_TYPE} ${params.PACKAGE_NAME} → FAILED"
+                // Description du build
+                currentBuild.description = "Mise à jour système sur ${env.POST_TARGET_SERVER} - ÉCHEC"
                 
-                // Create failure email body
+                // Corps de l'email d'échec
                 def emailBody = """
-                ❌ LINUX PACKAGE MANAGER - FAILURE
+                ❌ MISE À JOUR SYSTÈME - ÉCHEC
 
-                Package: ${params.PACKAGE_NAME}
-                Version: ${params.PACKAGE_VERSION ?: 'Latest'}
-                Action: ${params.PACKAGE_STATE} (${env.OPERATION_TYPE})
-                Server: ${params.TARGET_SERVER}
+                Serveur cible: ${env.POST_TARGET_SERVER}
+                Playbook: ${env.POST_PLAYBOOK_NAME}
                 Build: #${env.BUILD_NUMBER}
-                Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+                Date: ${env.POST_BUILD_TIMESTAMP}
+                Durée: ${currentBuild.durationString}
 
-                Error logs: ${env.BUILD_URL}console
+                🔍 Logs d'erreur: ${env.BUILD_URL}console
 
-                Configuration used:
-                - Update Cache: ${params.UPDATE_CACHE}
-                - Cache Valid Time: ${params.CACHE_VALID_TIME} seconds
-                - Extra Variables: ${params.EXTRA_VARS ?: 'None'}
-                - Playbook attempted: ${env.SELECTED_PLAYBOOK}
-
-                Please check the logs for more details.
+                ⚠️ La mise à jour système a échoué. Veuillez vérifier les logs pour plus de détails.
+                
+                Serveur concerné: ${env.POST_TARGET_SERVER}
                 """
                 
-                mail to: 'l.kieran95@gmail.com',
-                    subject: "[Jenkins] Linux Package ${env.OPERATION_TYPE} - ${params.PACKAGE_NAME} - Failure",
+                mail to: env.POST_EMAIL_RECIPIENT,
+                    subject: "${env.POST_EMAIL_SUBJECT_PREFIX} ${env.POST_TARGET_SERVER} - Échec",
                     body: emailBody
             }
         }
+        
         cleanup {
             cleanWs()
         }
     }
-}

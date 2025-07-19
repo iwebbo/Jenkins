@@ -98,7 +98,7 @@ pipeline {
                     env.OPERATION_TYPE = 'CONFIGURE'
                     
                     // Set playbook for Apache2 reverse proxy
-                    env.SELECTED_PLAYBOOK = 'deploy_apache2_reverse_proxy.yml'
+                    env.SELECTED_PLAYBOOK = 'deploy_apache_reverseproxy.yml'
                     
                     // SSL configuration check
                     if (params.ENABLE_SSL) {
@@ -142,18 +142,6 @@ pipeline {
                         fi
                         
                         echo "Playbook ${env.SELECTED_PLAYBOOK} found"
-                    """
-                    
-                    // Verify apache2_reverse_proxy role exists
-                    sh """
-                        if [ ! -d "/tmp/ansibleJenkins/ansible/roles/apache2_reverse_proxy" ]; then
-                            echo "Apache2 reverse proxy role not found!"
-                            echo "Roles directory contents:"
-                            ls -la /tmp/ansibleJenkins/ansible/roles/ || echo "Roles directory not found"
-                            exit 1
-                        fi
-                        
-                        echo "Apache2 reverse proxy role found"
                     """
                 }
             }
