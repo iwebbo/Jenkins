@@ -1,0 +1,276 @@
+pipeline {
+    agent any
+    
+    parameters {
+        choice(
+            name: 'TARGET_SERVER',
+            choices: [
+                'Windows',
+                'Linux',
+                'ServerVM1', 
+                'RaspberryPi2',
+                'all-linux',
+                'debian-servers',
+                'redhat-servers'
+            ],
+            description: 'Target server for build docker project'
+        )
+        choice(
+            name: 'ACTION',
+            choices: ['build', 'start', 'stop', 'down', 'restart', 'status'],
+            description: 'Action à effectuer'
+        )
+        string(
+            name: 'PROJECT_PATH',
+            defaultValue: 'G:\\Git\\Theia',
+            description: 'Path folder for build docker project'
+        )
+        string(
+            name: 'PROJECT_NAME',
+            defaultValue: 'Theai',
+            description: 'Project Name'
+        )
+        booleanParam(
+            name: 'FORCE_REBUILD',
+            defaultValue: false,
+            description: 'Forcer le rebuild des images'
+        )
+        booleanParam(
+            name: 'REMOVE_VOLUMES',
+            defaultValue: false,
+            description: 'Supprimer les volumes (pour action down)'
+        )
+    }
+    
+    environment {
+        ANSIBLE_HOST_KEY_CHECKING = 'False'
+        ANSIBLE_FORKS = '2'
+        ANSIBLE_CONFIG = '/tmp/ansibleJenkins/ansible/ansible.cfg'
+        SELECTED_PLAYBOOK = 'build_docker_project.yml'
+    }
+    
+    stages {        
+        stage('Ansible Verification') {
+            steps {
+                script {
+                    // Check that Ansible is installed
+                    sh 'ansible --version'
+                    
+                    // Check that the playbook exists
+                    sh """
+                        if [ ! -f "/tmp/ansibleJenkins/ansible/playbook/${env.SELECTED_PLAYBOOK}" ]; then
+                            echo "Playbook ${env.SELECTED_PLAYBOOK} not found!"
+                            echo "Playbook directory contents:"
+                            ls -la /tmp/ansibleJenkins/ansible/playbook/ || echo "Directory not found"
+                            exit 1
+                        fi
+                        
+                        echo "Playbook ${env.SELECTED_PLAYBOOK} found"
+                    """
+                }
+            }
+        }
+
+        stage('Deploy with Ansible') {
+            steps {
+                script {
+                    withCredentials([file(credentialsId: 'ssh-key-ansible-user-secret-file', variable: 'SSH_PRIVATE_KEY_FILE')]) {
+                        sh """
+                            ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini /tmp/ansibleJenkins/ansible/playbook/${SELECTED_PLAYBOOK} \\
+                                -e "HOST=${TARGET_SERVER}" \\
+                                -e "docker_action=${params.ACTION}" \\
+                                -e "rebuild=${params.FORCE_REBUILD}" \\
+                                -e "clean_volumes=${params.REMOVE_VOLUMES}" \\
+                                -e "project_path=${params.PROJECT_PATH}" \\
+                                -e "project_name=${params.PROJECT_NAME}" \\
+                        """
+                    }
+                }
+            }
+        }
+        
+        stage('Verify') {
+            when {
+                expression { params.ACTION in ['build', 'start', 'restart'] }
+            }
+            steps {
+                script {
+                    withCredentials([file(credentialsId: 'ssh-key-ansible-user-secret-file', variable: 'SSH_PRIVATE_KEY_FILE')]) {
+                        sh """
+                            ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini /tmp/ansibleJenkins/ansible/playbook/${SELECTED_PLAYBOOK} \\
+                                -e "action=status" \\
+                                -e "HOST=${TARGET_SERVER}" \\
+                        """
+                    }
+                }
+            }
+        }
+    }
+    
+post {
+        always {
+            echo "Docker project management completed"
+            
+            // Create detailed report
+            script {
+                def report = """
+                === DOCKER PROJECT BUILD REPORT ===
+                Project Name: ${params.PROJECT_NAME}
+                Project Path: ${params.PROJECT_PATH}
+                Target Server: ${params.TARGET_SERVER}
+                Action Performed: ${params.ACTION}
+                Force Rebuild: ${params.FORCE_REBUILD}
+                Remove Volumes: ${params.REMOVE_VOLUMES}
+                Playbook: ${env.SELECTED_PLAYBOOK ?: 'build_docker_project.yml'}
+                Build Number: #${env.BUILD_NUMBER}
+                Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+                Status: ${currentBuild.currentResult}
+                Duration: ${currentBuild.durationString}
+                Workspace: ${env.WORKSPACE}
+                ====================================================
+                """
+                writeFile file: 'docker_build_report.txt', text: report
+                archiveArtifacts artifacts: 'docker_build_report.txt', allowEmptyArchive: true
+            }
+        }
+        
+        success {
+            script {
+                echo "✅ Docker project '${params.PROJECT_NAME}' - Action '${params.ACTION}' completed successfully!"
+                
+                currentBuild.description = "${params.ACTION.toUpperCase()} ${params.PROJECT_NAME} → ${params.TARGET_SERVER}"
+                
+                // Create email body with formatting
+                def emailBody = """
+                🐳 DOCKER PROJECT BUILD - SUCCESS
+
+                Project: ${params.PROJECT_NAME}
+                Action: ${params.ACTION.toUpperCase()}
+                Target Server: ${params.TARGET_SERVER}
+                Project Path: ${params.PROJECT_PATH}
+                Build: #${env.BUILD_NUMBER}
+                Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+                Duration: ${currentBuild.durationString}
+
+                📊 Build details: ${env.BUILD_URL}
+
+                Configuration used:
+                - Force Rebuild: ${params.FORCE_REBUILD}
+                - Remove Volumes: ${params.REMOVE_VOLUMES}
+                - Playbook executed: ${env.SELECTED_PLAYBOOK}
+                
+                ${params.ACTION in ['start', 'restart'] ? """
+                🌐 Access URLs (estimated):
+                - Frontend: http://[TARGET_SERVER]:80/
+                - Backend API: http://[TARGET_SERVER]:8000/
+                - API Documentation: http://[TARGET_SERVER]:8000/docs
+                - Database: [TARGET_SERVER]:5432
+                """ : ''}
+
+                ✅ Docker project management completed successfully.
+                """
+                
+                // Send email notification
+                mail to: 'l.kieran95@gmail.com',
+                    subject: "[Jenkins] Docker Build - ${params.PROJECT_NAME} (${params.ACTION}) - Success",
+                    body: emailBody
+                    
+                // Slack notification (if configured)
+                // slackSend(
+                //     channel: '#deployments',
+                //     color: 'good',
+                //     message: ":white_check_mark: Docker build successful: ${params.PROJECT_NAME} (${params.ACTION}) on ${params.TARGET_SERVER}"
+                // )
+            }
+        }
+        
+        failure {
+            script {
+                echo "❌ Failed to execute action '${params.ACTION}' on Docker project '${params.PROJECT_NAME}'"
+                
+                currentBuild.description = "${params.ACTION.toUpperCase()} ${params.PROJECT_NAME} → FAILED"
+                
+                // Create failure email body
+                def emailBody = """
+                ❌ DOCKER PROJECT BUILD - FAILURE
+
+                Project: ${params.PROJECT_NAME}
+                Action: ${params.ACTION.toUpperCase()}
+                Target Server: ${params.TARGET_SERVER}
+                Project Path: ${params.PROJECT_PATH}
+                Build: #${env.BUILD_NUMBER}
+                Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+                Duration: ${currentBuild.durationString}
+
+                🔍 Error logs: ${env.BUILD_URL}console
+
+                Configuration attempted:
+                - Force Rebuild: ${params.FORCE_REBUILD}
+                - Remove Volumes: ${params.REMOVE_VOLUMES}
+                - Playbook attempted: ${env.SELECTED_PLAYBOOK}
+                - Ansible Config: ${env.ANSIBLE_CONFIG}
+
+                📋 Troubleshooting checklist:
+                1. Check if Docker is running on target server
+                2. Verify project path exists: ${params.PROJECT_PATH}
+                3. Check docker-compose.yml syntax
+                4. Verify network connectivity to target server
+                5. Check available disk space and memory
+                
+                Please check the Jenkins console logs for detailed error information.
+                """
+                
+                // Send failure email
+                mail to: 'l.kieran95@gmail.com',
+                    subject: "[Jenkins] Docker Build - ${params.PROJECT_NAME} (${params.ACTION}) - FAILURE",
+                    body: emailBody
+                    
+                // Slack notification for failures (if configured)
+                // slackSend(
+                //     channel: '#deployments',
+                //     color: 'danger',
+                //     message: ":x: Docker build failed: ${params.PROJECT_NAME} (${params.ACTION}) on ${params.TARGET_SERVER}"
+                // )
+            }
+        }
+        
+        unstable {
+            script {
+                echo "⚠️ Docker project '${params.PROJECT_NAME}' completed with warnings"
+                
+                currentBuild.description = "${params.ACTION.toUpperCase()} ${params.PROJECT_NAME} → UNSTABLE"
+                
+                def emailBody = """
+                ⚠️ DOCKER PROJECT BUILD - UNSTABLE
+
+                Project: ${params.PROJECT_NAME}
+                Action: ${params.ACTION.toUpperCase()}
+                Target Server: ${params.TARGET_SERVER}
+                Build: #${env.BUILD_NUMBER}
+                Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+
+                The build completed but with warnings. Please review the logs.
+
+                🔍 Build logs: ${env.BUILD_URL}console
+                """
+                
+                mail to: 'l.kieran95@gmail.com',
+                    subject: "[Jenkins] Docker Build - ${params.PROJECT_NAME} (${params.ACTION}) - UNSTABLE",
+                    body: emailBody
+            }
+        }
+        
+        cleanup {
+            script {
+                echo "🧹 Cleaning up workspace..."
+                // Archive important logs before cleanup
+                try {
+                    archiveArtifacts artifacts: '**/*.log', allowEmptyArchive: true, fingerprint: true
+                } catch (Exception e) {
+                    echo "No log files to archive: ${e.getMessage()}"
+                }
+            }
+            cleanWs()
+        }
+}
+}
