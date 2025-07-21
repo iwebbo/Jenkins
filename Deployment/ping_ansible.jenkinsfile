@@ -1,0 +1,388 @@
+pipeline {
+    agent any
+    
+    environment {
+        ANSIBLE_HOST_KEY_CHECKING = 'False'
+        ANSIBLE_FORKS = '2'
+        ANSIBLE_CONFIG = '/tmp/ansibleJenkins/ansible/ansible.cfg'
+    }
+    
+    parameters {
+        choice(
+            name: 'TARGET_OS',
+            choices: [
+                'linux',
+                'windows',
+                'both'
+            ],
+            description: 'Système d\'exploitation cible pour le test de ping'
+        )
+        
+        choice(
+            name: 'TARGET_SERVER',
+            choices: [
+                'all',
+                'ServerVM1', 
+                'RaspberryPi2',
+                'ReverseProxy',
+                'win-server1',
+                'win-server2',
+                'ubuntu-server1',
+                'centos-server1'
+            ],
+            description: 'Serveur cible spécifique (optionnel)'
+        )
+        
+        booleanParam(
+            name: 'VERBOSE_OUTPUT',
+            defaultValue: false,
+            description: 'Activer la sortie verbose d\'Ansible (-v)'
+        )
+        
+        booleanParam(
+            name: 'GATHER_SYSTEM_INFO',
+            defaultValue: true,
+            description: 'Collecter les informations système en plus du ping'
+        )
+    }
+    
+    stages {
+        stage('Validation des paramètres') {
+            steps {
+                script {
+                    echo "=== PARAMÈTRES DE LA PIPELINE ==="
+                    echo "OS Cible: ${params.TARGET_OS}"
+                    echo "Serveur cible: ${params.TARGET_SERVER}"
+                    echo "Mode verbose: ${params.VERBOSE_OUTPUT}"
+                    echo "Infos système: ${params.GATHER_SYSTEM_INFO}"
+                    echo "================================="
+                    
+                    // Validation des paramètres
+                    if (!params.TARGET_OS || params.TARGET_OS == '') {
+                        error("Le paramètre TARGET_OS est requis")
+                    }
+                }
+            }
+        }
+        
+        stage('Vérification Ansible') {
+            steps {
+                script {
+                    echo "Vérification de l'installation Ansible..."
+                    sh 'ansible --version'
+                    
+                    echo "Vérification de la connectivité vers l'inventaire..."
+                    sh 'ansible all -i /tmp/ansibleJenkins/ansible/inventory/hosts.yml --list-hosts'
+                    
+                    // Vérification de la syntaxe des playbooks selon l'OS cible
+                    if (params.TARGET_OS == 'linux' || params.TARGET_OS == 'both') {
+                        echo "Vérification du playbook Linux..."
+                        sh "ansible-playbook --syntax-check -i /tmp/ansibleJenkins/ansible/inventory/hosts.yml /tmp/ansibleJenkins/ansible/playbooks/ping-test-linux.yml"
+                    }
+                    
+                    if (params.TARGET_OS == 'windows' || params.TARGET_OS == 'both') {
+                        echo "Vérification du playbook Windows..."
+                        sh "ansible-playbook --syntax-check -i /tmp/ansibleJenkins/ansible/inventory/hosts.yml /tmp/ansibleJenkins/ansible/playbooks/ping-test-windows.yml"
+                    }
+                }
+            }
+        }
+        
+        stage('Test de ping Linux') {
+            when {
+                expression { params.TARGET_OS == 'linux' || params.TARGET_OS == 'both' }
+            }
+            steps {
+                script {
+                    echo "=== EXÉCUTION DU TEST PING LINUX ==="
+                    
+                    def verboseFlag = params.VERBOSE_OUTPUT ? '-v' : ''
+                    def limitFlag = (params.TARGET_SERVER != 'all') ? "--limit ${params.TARGET_SERVER}" : ''
+                    def extraVars = params.GATHER_SYSTEM_INFO ? '-e gather_system_info=true' : '-e gather_system_info=false'
+                    
+                    withCredentials([file(credentialsId: 'ssh-key-ansible-user-secret-file', variable: 'SSH_KEY_FILE')]) {
+                        sh """
+                            ansible-playbook ${verboseFlag} \
+                                -i /tmp/ansibleJenkins/ansible/inventory/hosts.yml \
+                                /tmp/ansibleJenkins/ansible/playbooks/ping-test-linux.yml \
+                                ${limitFlag} \
+                                ${extraVars} \
+                                --tags linux,ping
+                        """
+                    }
+                }
+            }
+        }
+        
+        stage('Test de ping Windows') {
+            when {
+                expression { params.TARGET_OS == 'windows' || params.TARGET_OS == 'both' }
+            }
+            steps {
+                script {
+                    echo "=== EXÉCUTION DU TEST PING WINDOWS ==="
+                    
+                    def verboseFlag = params.VERBOSE_OUTPUT ? '-v' : ''
+                    def limitFlag = (params.TARGET_SERVER != 'all') ? "--limit ${params.TARGET_SERVER}" : ''
+                    def extraVars = params.GATHER_SYSTEM_INFO ? '-e gather_system_info=true' : '-e gather_system_info=false'
+                    
+                    withCredentials([
+                        usernamePassword(credentialsId: 'windows-ansible-credentials', 
+                                       usernameVariable: 'WIN_USER', 
+                                       passwordVariable: 'WIN_PASS')
+                    ]) {
+                        sh """
+                            ansible-playbook ${verboseFlag} \
+                                -i /tmp/ansibleJenkins/ansible/inventory/hosts.yml \
+                                /tmp/ansibleJenkins/ansible/playbooks/ping-test-windows.yml \
+                                ${limitFlag} \
+                                ${extraVars} \
+                                --tags windows,ping \
+                                -e ansible_user=\$WIN_USER \
+                                -e ansible_password=\$WIN_PASS
+                        """
+                    }
+                }
+            }
+        }
+        
+        stage('Test de connectivité direct') {
+            steps {
+                script {
+                    echo "=== TEST DE CONNECTIVITÉ DIRECT ==="
+                    
+                    try {
+                        if (params.TARGET_OS == 'linux' || params.TARGET_OS == 'both') {
+                            echo "Test ping direct Linux..."
+                            def limitFlag = (params.TARGET_SERVER != 'all') ? "--limit ${params.TARGET_SERVER}" : ''
+                            sh "ansible linux -i /tmp/ansibleJenkins/ansible/inventory/hosts.yml -m ping ${limitFlag}"
+                        }
+                        
+                        if (params.TARGET_OS == 'windows' || params.TARGET_OS == 'both') {
+                            echo "Test ping direct Windows..."
+                            def limitFlag = (params.TARGET_SERVER != 'all') ? "--limit ${params.TARGET_SERVER}" : ''
+                            withCredentials([
+                                usernamePassword(credentialsId: 'windows-ansible-credentials', 
+                                               usernameVariable: 'WIN_USER', 
+                                               passwordVariable: 'WIN_PASS')
+                            ]) {
+                                sh "ansible windows -i /tmp/ansibleJenkins/ansible/inventory/hosts.yml -m win_ping ${limitFlag} -e ansible_user=\$WIN_USER -e ansible_password=\$WIN_PASS"
+                            }
+                        }
+                    } catch (Exception e) {
+                        echo "Certains serveurs ne sont pas accessibles via le test direct: ${e.getMessage()}"
+                        currentBuild.result = 'UNSTABLE'
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            script {
+                // =================================================================
+                // VARIABLES GLOBALES POUR LE TEST DE PING
+                // =================================================================
+                
+                env.POST_OPERATION_TYPE = 'PING CONNECTIVITY TEST'
+                env.POST_TARGET_OS = params.TARGET_OS
+                env.POST_TARGET_SERVER = params.TARGET_SERVER
+                env.POST_VERBOSE_MODE = params.VERBOSE_OUTPUT.toString()
+                env.POST_SYSTEM_INFO = params.GATHER_SYSTEM_INFO.toString()
+                
+                // Configuration email
+                env.POST_EMAIL_RECIPIENT = 'l.kieran95@gmail.com'
+                env.POST_EMAIL_SUBJECT_PREFIX = '[Ansible Ping Test]'
+                
+                // Timestamp de l'exécution
+                env.POST_BUILD_TIMESTAMP = new Date().format('yyyy-MM-dd HH:mm:ss')
+                
+                // Déterminer les playbooks exécutés
+                def playbooks_executed = []
+                if (params.TARGET_OS == 'linux' || params.TARGET_OS == 'both') {
+                    playbooks_executed.add('ping-test-linux.yml')
+                }
+                if (params.TARGET_OS == 'windows' || params.TARGET_OS == 'both') {
+                    playbooks_executed.add('ping-test-windows.yml')
+                }
+                env.POST_PLAYBOOKS_EXECUTED = playbooks_executed.join(', ')
+                
+                // =================================================================
+                // GÉNÉRATION DU RAPPORT
+                // =================================================================
+                
+                echo "Test de connectivité terminé"
+                
+                def report = """
+                === RAPPORT DE TEST DE CONNECTIVITÉ ===
+                Type d'opération: ${env.POST_OPERATION_TYPE}
+                OS Cible: ${env.POST_TARGET_OS}
+                Serveur(s) cible(s): ${env.POST_TARGET_SERVER}
+                Playbook(s) exécuté(s): ${env.POST_PLAYBOOKS_EXECUTED}
+                Mode verbose: ${env.POST_VERBOSE_MODE}
+                Infos système collectées: ${env.POST_SYSTEM_INFO}
+                Build: #${env.BUILD_NUMBER}
+                Date: ${env.POST_BUILD_TIMESTAMP}
+                Statut: ${currentBuild.currentResult}
+                Durée: ${currentBuild.durationString}
+                
+                URL du build: ${env.BUILD_URL}
+                Logs console: ${env.BUILD_URL}console
+                ==========================================
+                """
+                
+                writeFile file: "ping_test_report.txt", text: report
+                archiveArtifacts artifacts: "ping_test_report.txt", allowEmptyArchive: true
+                
+                // Sauvegarde des logs Ansible si disponibles
+                sh '''
+                    if [ -f /tmp/ansible.log ]; then
+                        cp /tmp/ansible.log ansible_execution.log
+                    fi
+                '''
+                archiveArtifacts artifacts: "ansible_execution.log", allowEmptyArchive: true
+            }
+        }
+        
+        success {
+            script {
+                echo "Test de connectivité réussi pour '${env.POST_TARGET_OS}' sur '${env.POST_TARGET_SERVER}'"
+                
+                // Description du build
+                currentBuild.description = "Test ping ${env.POST_TARGET_OS} sur ${env.POST_TARGET_SERVER} - Réussi"
+                
+                // Emoji selon l'OS
+                def osEmoji = ''
+                switch(env.POST_TARGET_OS) {
+                    case 'linux':
+                        osEmoji = '🐧'
+                        break
+                    case 'windows':
+                        osEmoji = '🪟'
+                        break
+                    case 'both':
+                        osEmoji = '🐧🪟'
+                        break
+                    default:
+                        osEmoji = '🖥️'
+                }
+                
+                // Corps de l'email de succès
+                def emailBody = """
+                ${osEmoji} TEST DE CONNECTIVITÉ - SUCCÈS
+
+                Type de test: Test de ping Ansible
+                OS Cible: ${env.POST_TARGET_OS}
+                Serveur(s): ${env.POST_TARGET_SERVER}
+                Playbook(s): ${env.POST_PLAYBOOKS_EXECUTED}
+                Build: #${env.BUILD_NUMBER}
+                Date: ${env.POST_BUILD_TIMESTAMP}
+                Durée: ${currentBuild.durationString}
+
+                📊 Détails du build: ${env.BUILD_URL}
+
+                ✅ Tous les tests de connectivité se sont terminés avec succès.
+                
+                ${env.POST_TARGET_OS == 'both' ? 'Les serveurs Linux et Windows' : 'Le(s) serveur(s) ' + env.POST_TARGET_OS} 
+                sont accessibles et répondent correctement aux requêtes Ansible.
+                
+                ${env.POST_SYSTEM_INFO == 'true' ? '📋 Les informations système ont été collectées avec succès.' : ''}
+                """
+                
+                mail to: env.POST_EMAIL_RECIPIENT,
+                    subject: "${env.POST_EMAIL_SUBJECT_PREFIX} ${env.POST_TARGET_OS.toUpperCase()} - Succès",
+                    body: emailBody
+            }
+        }
+        
+        failure {
+            script {
+                echo "Échec du test de connectivité pour '${env.POST_TARGET_OS}' sur '${env.POST_TARGET_SERVER}'"
+                
+                // Description du build
+                currentBuild.description = "Test ping ${env.POST_TARGET_OS} sur ${env.POST_TARGET_SERVER} - ÉCHEC"
+                
+                // Emoji selon l'OS
+                def osEmoji = ''
+                switch(env.POST_TARGET_OS) {
+                    case 'linux':
+                        osEmoji = '🐧'
+                        break
+                    case 'windows':
+                        osEmoji = '🪟'
+                        break
+                    case 'both':
+                        osEmoji = '🐧🪟'
+                        break
+                    default:
+                        osEmoji = '🖥️'
+                }
+                
+                // Corps de l'email d'échec
+                def emailBody = """
+                ${osEmoji} TEST DE CONNECTIVITÉ - ÉCHEC
+
+                Type de test: Test de ping Ansible
+                OS Cible: ${env.POST_TARGET_OS}
+                Serveur(s): ${env.POST_TARGET_SERVER}
+                Playbook(s): ${env.POST_PLAYBOOKS_EXECUTED}
+                Build: #${env.BUILD_NUMBER}
+                Date: ${env.POST_BUILD_TIMESTAMP}
+                Durée: ${currentBuild.durationString}
+
+                🔍 Logs d'erreur: ${env.BUILD_URL}console
+
+                ❌ Le test de connectivité a échoué.
+
+                Causes possibles:
+                • Serveur(s) inaccessible(s) ou éteint(s)
+                • Problème de configuration SSH/WinRM
+                • Problème de réseau ou firewall
+                • Identifiants incorrects
+                • Configuration Ansible incorrecte
+
+                Serveur(s) concerné(s): ${env.POST_TARGET_SERVER}
+                OS: ${env.POST_TARGET_OS}
+                
+                Veuillez vérifier les logs pour plus de détails.
+                """
+                
+                mail to: env.POST_EMAIL_RECIPIENT,
+                    subject: "${env.POST_EMAIL_SUBJECT_PREFIX} ${env.POST_TARGET_OS.toUpperCase()} - Échec",
+                    body: emailBody
+            }
+        }
+        
+        unstable {
+            script {
+                echo "Test de connectivité instable pour '${env.POST_TARGET_OS}' sur '${env.POST_TARGET_SERVER}'"
+                
+                currentBuild.description = "Test ping ${env.POST_TARGET_OS} sur ${env.POST_TARGET_SERVER} - Instable"
+                
+                def emailBody = """
+                ⚠️ TEST DE CONNECTIVITÉ - INSTABLE
+
+                OS Cible: ${env.POST_TARGET_OS}
+                Serveur(s): ${env.POST_TARGET_SERVER}
+                Build: #${env.BUILD_NUMBER}
+                Date: ${env.POST_BUILD_TIMESTAMP}
+
+                🔍 Logs: ${env.BUILD_URL}console
+
+                ⚠️ Certains serveurs ne sont pas accessibles, mais d'autres ont répondu correctement.
+                
+                Veuillez vérifier l'état de tous vos serveurs.
+                """
+                
+                mail to: env.POST_EMAIL_RECIPIENT,
+                    subject: "${env.POST_EMAIL_SUBJECT_PREFIX} ${env.POST_TARGET_OS.toUpperCase()} - Instable",
+                    body: emailBody
+            }
+        }
+        
+        cleanup {
+            cleanWs()
+        }
+    }
+}
