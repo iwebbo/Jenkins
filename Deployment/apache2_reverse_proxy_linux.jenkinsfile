@@ -66,6 +66,23 @@ pipeline {
             defaultValue: true,
             description: 'Update package cache before Apache2 installation (recommended)'
         )
+        choice(
+            name: 'ANSIBLE_VERBOSITY',
+            choices: [
+                '0',
+                '1',
+                '2',
+                '3',
+                '4'
+            ],
+            description: '''🔧 Niveau de verbosité Ansible:
+            
+            0 = Normal (défaut)
+            1 = Verbose (-v)
+            2 = Plus verbose (-vv)
+            3 = Debug (-vvv)
+            4 = Debug complet (-vvvv)'''
+        )
         text(
             name: 'EXTRA_VARS',
             defaultValue: '',
@@ -74,128 +91,160 @@ pipeline {
     }
     
     stages {
-        stage('Parameter Validation') {
+        stage('Validation des paramètres') {
             steps {
                 script {
-                    echo "🔍 Validating Apache2 Reverse Proxy parameters..."
+                    echo "🔍 Validation des paramètres Apache2 Reverse Proxy..."
+                    echo "Serveur cible: ${params.TARGET_SERVER}"
+                    echo "Nom du serveur: ${params.SERVER_NAME}"
+                    echo "Backend URL: ${params.PROXY_PASS}"
+                    echo "Verbosité Ansible: ${params.ANSIBLE_VERBOSITY}"
                     
-                    // Server name validation
+                    // Déterminer le flag de verbosité
+                    def verbosityFlag = ''
+                    if (params.ANSIBLE_VERBOSITY != '0') {
+                        verbosityFlag = '-' + 'v' * params.ANSIBLE_VERBOSITY.toInteger()
+                    }
+                    env.ANSIBLE_VERBOSE_FLAG = verbosityFlag
+                    echo "Flag de verbosité: '${env.ANSIBLE_VERBOSE_FLAG}'"
+                    
+                    // Validation des paramètres obligatoires
                     if (params.SERVER_NAME.trim() == '') {
-                        error("Server name is required!")
+                        error("Le nom du serveur est obligatoire!")
                     }
                     
-                    // Proxy pass validation
                     if (params.PROXY_PASS.trim() == '') {
-                        error("Proxy pass URL is required!")
+                        error("L'URL du backend est obligatoire!")
                     }
                     
-                    // URL format validation
+                    // Validation du format URL
                     if (!params.PROXY_PASS.startsWith('http://') && !params.PROXY_PASS.startsWith('https://')) {
-                        error("Proxy pass must be a valid URL starting with http:// or https://")
+                        error("L'URL du backend doit commencer par http:// ou https://")
                     }
                     
-                    // Set operation type
-                    env.OPERATION_TYPE = 'CONFIGURE'
-                    
-                    // Set playbook for Apache2 reverse proxy
-                    env.SELECTED_PLAYBOOK = 'deploy_apache_reverseproxy.yml'
-                    
-                    // SSL configuration check
+                    // Validation SSL
                     if (params.ENABLE_SSL) {
                         if (params.SSL_CERT_FILE.trim() == '' || params.SSL_CERT_KEY_FILE.trim() == '') {
-                            error("SSL certificate and key files are required when SSL is enabled!")
+                            error("Les fichiers de certificat SSL sont obligatoires quand SSL est activé!")
                         }
                     }
                     
-                    echo "Parameter summary:"
-                    echo "   • Server Name: ${params.SERVER_NAME}"
-                    echo "   • Backend URL: ${params.PROXY_PASS}"
-                    echo "   • HTTP Port: ${params.HTTP_PORT}"
-                    echo "   • HTTPS Port: ${params.HTTPS_PORT}"
-                    echo "   • SSL Enabled: ${params.ENABLE_SSL}"
-                    echo "   • Target Server: ${params.TARGET_SERVER}"
-                    echo "   • Update Cache: ${params.UPDATE_CACHE}"
-                    echo "   • Playbook: ${env.SELECTED_PLAYBOOK}"
+                    // Configuration des variables d'environnement
+                    env.OPERATION_TYPE = 'CONFIGURE'
+                    env.SELECTED_PLAYBOOK = 'deploy_apache_reverseproxy.yml'
+                    
+                    echo "✅ Paramètres validés:"
+                    echo "   Nom du serveur: ${params.SERVER_NAME}"
+                    echo "   Backend URL: ${params.PROXY_PASS}"
+                    echo "   Port HTTP: ${params.HTTP_PORT}"
+                    echo "   Port HTTPS: ${params.HTTPS_PORT}"
+                    echo "   SSL activé: ${params.ENABLE_SSL}"
+                    echo "   Playbook: ${env.SELECTED_PLAYBOOK}"
                     
                     if (params.ENABLE_SSL) {
-                        echo "   • SSL Certificate: ${params.SSL_CERT_FILE}"
-                        echo "   • SSL Key: ${params.SSL_CERT_KEY_FILE}"
-                        echo "   • SSL CA: ${params.SSL_CERT_CA_FILE}"
+                        echo "   Certificat SSL: ${params.SSL_CERT_FILE}"
+                        echo "   Clé SSL: ${params.SSL_CERT_KEY_FILE}"
+                        echo "   CA SSL: ${params.SSL_CERT_CA_FILE}"
                     }
                 }
             }
         }
         
-        stage('Ansible Verification') {
+        stage('Vérification Ansible') {
             steps {
                 script {
-                    // Check that Ansible is installed
+                    // Vérifier qu'Ansible est installé
                     sh 'ansible --version'
                     
-                    // Check that the playbook exists
+                    // Vérifier que le playbook existe
                     sh """
                         if [ ! -f "/tmp/ansibleJenkins/ansible/playbook/${env.SELECTED_PLAYBOOK}" ]; then
-                            echo "Playbook ${env.SELECTED_PLAYBOOK} not found!"
-                            echo "Playbook directory contents:"
-                            ls -la /tmp/ansibleJenkins/ansible/playbook/ || echo "Directory not found"
+                            echo "❌ Playbook ${env.SELECTED_PLAYBOOK} non trouvé!"
+                            echo "Contenu du répertoire playbook:"
+                            ls -la /tmp/ansibleJenkins/ansible/playbook/ || echo "Répertoire non trouvé"
                             exit 1
                         fi
                         
-                        echo "Playbook ${env.SELECTED_PLAYBOOK} found"
+                        echo "✅ Playbook ${env.SELECTED_PLAYBOOK} trouvé"
                     """
+                    
+                    // Vérifier la syntaxe du playbook
+                    sh "ansible-playbook --syntax-check -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini /tmp/ansibleJenkins/ansible/playbook/${SELECTED_PLAYBOOK} -e HOST=${TARGET_SERVER}"
                 }
             }
         }
         
-        stage('Apache2 Reverse Proxy Configuration') {
+        stage('Préparation des variables Ansible') {
+            steps {
+                script {
+                    echo "🔧 Préparation des variables Ansible pour Apache2 Reverse Proxy..."
+                    
+                    // Variables Ansible principales
+                    def ansibleVars = []
+                    ansibleVars << "host='${params.TARGET_SERVER}'"
+                    ansibleVars << "server_name='${params.SERVER_NAME}'"
+                    ansibleVars << "proxy_pass='${params.PROXY_PASS}'"
+                    ansibleVars << "update_cache=${params.UPDATE_CACHE}"
+                    
+                    // Ports personnalisés
+                    if (params.HTTP_PORT != '8080') {
+                        ansibleVars << "http_port=${params.HTTP_PORT}"
+                    }
+                    
+                    if (params.HTTPS_PORT != '4443') {
+                        ansibleVars << "https_port=${params.HTTPS_PORT}"
+                    }
+                    
+                    // Configuration SSL
+                    if (params.ENABLE_SSL) {
+                        ansibleVars << "enable_ssl=true"
+                        ansibleVars << "ssl_cert_file='${params.SSL_CERT_FILE}'"
+                        ansibleVars << "ssl_cert_key_file='${params.SSL_CERT_KEY_FILE}'"
+                        ansibleVars << "ssl_cert_CA_file='${params.SSL_CERT_CA_FILE}'"
+                    } else {
+                        ansibleVars << "enable_ssl=false"
+                    }
+                    
+                    // Variables supplémentaires
+                    if (params.EXTRA_VARS.trim() != '') {
+                        ansibleVars << params.EXTRA_VARS.trim()
+                    }
+                    
+                    // Stocker toutes les variables formatées
+                    env.ANSIBLE_EXTRA_VARS = ansibleVars.join(' ')
+                    
+                    echo "✅ Variables Ansible préparées:"
+                    echo "   Serveur: ${params.SERVER_NAME}"
+                    echo "   Backend: ${params.PROXY_PASS}"
+                    echo "   SSL: ${params.ENABLE_SSL}"
+                    echo "Variables complètes: ${env.ANSIBLE_EXTRA_VARS}"
+                }
+            }
+        }
+        
+        stage('Configuration Apache2 Reverse Proxy') {
             steps {
                 script {
                     withCredentials([file(credentialsId: 'ssh-key-ansible-user-secret-file', variable: 'SSH_PRIVATE_KEY_FILE')]) {
-                        echo "🚀 Starting Apache2 Reverse Proxy ${env.OPERATION_TYPE}..."
-                        echo "Server Name: ${params.SERVER_NAME}"
+                        echo "🚀 Démarrage de la configuration Apache2 Reverse Proxy..."
+                        echo "Nom du serveur: ${params.SERVER_NAME}"
                         echo "Backend URL: ${params.PROXY_PASS}"
-                        echo "Target Server: ${params.TARGET_SERVER}"
+                        echo "Serveur cible: ${params.TARGET_SERVER}"
                         echo "Playbook: ${env.SELECTED_PLAYBOOK}"
+                        echo "Verbosité: ${params.ANSIBLE_VERBOSITY} ${env.ANSIBLE_VERBOSE_FLAG}"
                         
                         sh '''
+                            chmod 600 $SSH_PRIVATE_KEY_FILE
                             
-                            echo "Executing Apache2 Reverse Proxy configuration playbook..."
+                            echo "Exécution du playbook Apache2 Reverse Proxy..."
+                            echo "Variables utilisées: ${ANSIBLE_EXTRA_VARS}"
+                            echo "Flag de verbosité: ${ANSIBLE_VERBOSE_FLAG}"
                             
-                            # Build ansible command with required variables
-                            ANSIBLE_CMD="ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \
+                            # Commande Ansible pour configuration Apache2 Reverse Proxy
+                            ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \
                                 /tmp/ansibleJenkins/ansible/playbook/${SELECTED_PLAYBOOK} \
-                                -e host=${TARGET_SERVER} \
-                                -e server_name=${SERVER_NAME} \
-                                -e proxy_pass=${PROXY_PASS} \
-                                -e update_cache=${UPDATE_CACHE}"
-                            
-                            # Add HTTP port configuration
-                            if [ -n "${HTTP_PORT}" ] && [ "${HTTP_PORT}" != "8080" ]; then
-                                ANSIBLE_CMD="${ANSIBLE_CMD} -e http_port=${HTTP_PORT}"
-                            fi
-                            
-                            # Add HTTPS port configuration
-                            if [ -n "${HTTPS_PORT}" ] && [ "${HTTPS_PORT}" != "4443" ]; then
-                                ANSIBLE_CMD="${ANSIBLE_CMD} -e https_port=${HTTPS_PORT}"
-                            fi
-                            
-                            # Add SSL configuration if enabled
-                            if [ "${ENABLE_SSL}" = "true" ]; then
-                                ANSIBLE_CMD="${ANSIBLE_CMD} -e enable_ssl=true"
-                                ANSIBLE_CMD="${ANSIBLE_CMD} -e ssl_cert_file=${SSL_CERT_FILE}"
-                                ANSIBLE_CMD="${ANSIBLE_CMD} -e ssl_cert_key_file=${SSL_CERT_KEY_FILE}"
-                                ANSIBLE_CMD="${ANSIBLE_CMD} -e ssl_cert_CA_file=${SSL_CERT_CA_FILE}"
-                            else
-                                ANSIBLE_CMD="${ANSIBLE_CMD} -e enable_ssl=false"
-                            fi
-                            
-                            # Add extra variables if provided
-                            if [ -n "${EXTRA_VARS}" ]; then
-                                ANSIBLE_CMD="${ANSIBLE_CMD} -e ${EXTRA_VARS}"
-                            fi
-                            
-                            echo "Executing command: ${ANSIBLE_CMD}"
-                            eval ${ANSIBLE_CMD}
+                                -e "${ANSIBLE_EXTRA_VARS}" \
+                                ${ANSIBLE_VERBOSE_FLAG}
                         '''
                     }
                 }
@@ -205,29 +254,28 @@ pipeline {
     
     post {
         always {
-            echo "Apache2 Reverse Proxy configuration completed"
+            echo "Configuration Apache2 Reverse Proxy terminée"
             
-            // Create detailed report
+            // Créer un rapport détaillé
             script {
                 def report = """
-                === APACHE2 REVERSE PROXY CONFIGURATION REPORT ===
-                Server Name: ${params.SERVER_NAME}
+                === RAPPORT APACHE2 REVERSE PROXY ===
+                Nom du serveur: ${params.SERVER_NAME}
                 Backend URL: ${params.PROXY_PASS}
-                HTTP Port: ${params.HTTP_PORT}
-                HTTPS Port: ${params.HTTPS_PORT}
-                SSL Enabled: ${params.ENABLE_SSL}
-                SSL Certificate: ${params.ENABLE_SSL ? params.SSL_CERT_FILE : 'N/A'}
-                SSL Key File: ${params.ENABLE_SSL ? params.SSL_CERT_KEY_FILE : 'N/A'}
-                SSL CA File: ${params.ENABLE_SSL ? params.SSL_CERT_CA_FILE : 'N/A'}
-                Operation: ${env.OPERATION_TYPE ?: 'Not defined'}
-                Target Server: ${params.TARGET_SERVER}
-                Update Cache: ${params.UPDATE_CACHE}
-                Extra Variables: ${params.EXTRA_VARS ?: 'None'}
-                Playbook: ${env.SELECTED_PLAYBOOK ?: 'Not defined'}
+                Port HTTP: ${params.HTTP_PORT}
+                Port HTTPS: ${params.HTTPS_PORT}
+                SSL activé: ${params.ENABLE_SSL}
+                Serveur cible: ${params.TARGET_SERVER}
+                Verbosité Ansible: ${params.ANSIBLE_VERBOSITY}
+                Mise à jour cache: ${params.UPDATE_CACHE}
+                Variables extra: ${params.EXTRA_VARS ?: 'Aucune'}
+                Variables Ansible: ${env.ANSIBLE_EXTRA_VARS ?: 'Non générées'}
+                Playbook: ${env.SELECTED_PLAYBOOK ?: 'Non défini'}
                 Build: #${env.BUILD_NUMBER}
                 Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
-                Status: ${currentBuild.currentResult}
-                ====================================================
+                Statut: ${currentBuild.currentResult}
+                Durée: ${currentBuild.durationString ?: 'N/A'}
+                ==========================================
                 """
                 writeFile file: 'apache2_reverse_proxy_report.txt', text: report
                 archiveArtifacts artifacts: 'apache2_reverse_proxy_report.txt', allowEmptyArchive: true
@@ -235,82 +283,86 @@ pipeline {
         }
         success {
             script {
-                echo "Apache2 Reverse Proxy configuration for '${params.SERVER_NAME}' completed successfully!"
+                echo "Configuration Apache2 Reverse Proxy '${params.SERVER_NAME}' réussie!"
                 
-                currentBuild.description = "${env.OPERATION_TYPE} ${params.SERVER_NAME} → ${params.TARGET_SERVER}"
+                currentBuild.description = "Apache2 Reverse Proxy ${params.SERVER_NAME} → ${params.TARGET_SERVER}"
                 
-                // Create email body with formatting
+                // Créer le corps de l'email en texte avec formatage
                 def emailBody = """
-                🔧 APACHE2 REVERSE PROXY - SUCCESS
+                    🔧 APACHE2 REVERSE PROXY - SUCCÈS
 
-                Server Name: ${params.SERVER_NAME}
-                Backend URL: ${params.PROXY_PASS}
-                HTTP Port: ${params.HTTP_PORT}
-                HTTPS Port: ${params.HTTPS_PORT}
-                SSL Enabled: ${params.ENABLE_SSL}
-                Target Server: ${params.TARGET_SERVER}
-                Operation: ${env.OPERATION_TYPE}
-                Build: #${env.BUILD_NUMBER}
-                Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+                    Nom du serveur: ${params.SERVER_NAME}
+                    Backend URL: ${params.PROXY_PASS}
+                    Port HTTP: ${params.HTTP_PORT}
+                    Port HTTPS: ${params.HTTPS_PORT}
+                    SSL activé: ${params.ENABLE_SSL}
+                    Serveur cible: ${params.TARGET_SERVER}
+                    Verbosité Ansible: ${params.ANSIBLE_VERBOSITY}
+                    Build: #${env.BUILD_NUMBER}
+                    Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+                    Durée: ${currentBuild.durationString ?: 'N/A'}
 
-                📊 Build details: ${env.BUILD_URL}
+                    📊 Détails du build: ${env.BUILD_URL}
 
-                Configuration used:
-                - Update Cache: ${params.UPDATE_CACHE}
-                - Extra Variables: ${params.EXTRA_VARS ?: 'None'}
-                - Playbook executed: ${env.SELECTED_PLAYBOOK}
-                
-                ${params.ENABLE_SSL ? """
-                SSL Configuration:
-                - Certificate: ${params.SSL_CERT_FILE}
-                - Private Key: ${params.SSL_CERT_KEY_FILE}
-                - CA Certificate: ${params.SSL_CERT_CA_FILE}
-                """ : 'SSL: Disabled'}
+                    Configuration utilisée:
+                    - Playbook: ${env.SELECTED_PLAYBOOK ?: 'Non défini'}
+                    - Variables Ansible: ${env.ANSIBLE_EXTRA_VARS ? 'Générées' : 'Non générées'}
+                    - Mise à jour cache: ${params.UPDATE_CACHE}
 
-                ✅ Apache2 Reverse Proxy is now configured and ready to serve requests.
-                
-                Access URLs:
-                - HTTP: http://${params.SERVER_NAME}:${params.HTTP_PORT}
-                ${params.ENABLE_SSL ? "- HTTPS: https://${params.SERVER_NAME}:${params.HTTPS_PORT}" : ''}
+                    ${params.ENABLE_SSL ? """
+                    Configuration SSL:
+                    - Certificat: ${params.SSL_CERT_FILE}
+                    - Clé privée: ${params.SSL_CERT_KEY_FILE}
+                    - CA: ${params.SSL_CERT_CA_FILE}
+                    """ : 'SSL: Désactivé'}
+
+                    ✅ Apache2 Reverse Proxy est configuré et prêt à servir les requêtes.
+
+                    URLs d'accès:
+                    - HTTP: http://${params.SERVER_NAME}:${params.HTTP_PORT}
+                    ${params.ENABLE_SSL ? "- HTTPS: https://${params.SERVER_NAME}:${params.HTTPS_PORT}" : ''}
                 """
                 
                 mail to: 'l.kieran95@gmail.com',
-                    subject: "[Jenkins] Apache2 Reverse Proxy Configuration - ${params.SERVER_NAME} - Success",
+                    subject: "[Jenkins] Apache2 Reverse Proxy - ${params.SERVER_NAME} - Succès",
                     body: emailBody
             }
         }
         failure {
             script {
-                echo "Failed to configure Apache2 Reverse Proxy for '${params.SERVER_NAME}'"
+                echo "Échec de la configuration Apache2 Reverse Proxy '${params.SERVER_NAME}'"
                 
-                currentBuild.description = "${env.OPERATION_TYPE} ${params.SERVER_NAME} → FAILED"
+                currentBuild.description = "Apache2 Reverse Proxy ${params.SERVER_NAME} → ÉCHEC"
                 
-                // Create failure email body
+                // Créer le corps de l'email d'échec
                 def emailBody = """
-                ❌ APACHE2 REVERSE PROXY - FAILURE
+                    ❌ APACHE2 REVERSE PROXY - ÉCHEC
 
-                Server Name: ${params.SERVER_NAME}
-                Backend URL: ${params.PROXY_PASS}
-                Target Server: ${params.TARGET_SERVER}
-                Operation: ${env.OPERATION_TYPE}
-                Build: #${env.BUILD_NUMBER}
-                Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+                    Nom du serveur: ${params.SERVER_NAME}
+                    Backend URL: ${params.PROXY_PASS}
+                    Port HTTP: ${params.HTTP_PORT}
+                    Port HTTPS: ${params.HTTPS_PORT}
+                    SSL activé: ${params.ENABLE_SSL}
+                    Serveur cible: ${params.TARGET_SERVER}
+                    Verbosité Ansible: ${params.ANSIBLE_VERBOSITY}
+                    Build: #${env.BUILD_NUMBER}
+                    Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
 
-                Error logs: ${env.BUILD_URL}console
+                    🔍 Logs d'erreur: ${env.BUILD_URL}console
 
-                Configuration attempted:
-                - HTTP Port: ${params.HTTP_PORT}
-                - HTTPS Port: ${params.HTTPS_PORT}
-                - SSL Enabled: ${params.ENABLE_SSL}
-                - Update Cache: ${params.UPDATE_CACHE}
-                - Extra Variables: ${params.EXTRA_VARS ?: 'None'}
-                - Playbook attempted: ${env.SELECTED_PLAYBOOK}
+                    Configuration utilisée:
+                    - Playbook: ${env.SELECTED_PLAYBOOK ?: 'Non défini'}
+                    - Mise à jour cache: ${params.UPDATE_CACHE}
+                    - Variables extra: ${params.EXTRA_VARS ?: 'Aucune'}
 
-                Please check the logs for more details.
+                    Variables Ansible générées:
+                    ${env.ANSIBLE_EXTRA_VARS ?: 'Non générées'}
+
+                    ⚠️ Veuillez vérifier les logs pour plus de détails.
                 """
                 
                 mail to: 'l.kieran95@gmail.com',
-                    subject: "[Jenkins] Apache2 Reverse Proxy Configuration - ${params.SERVER_NAME} - Failure",
+                    subject: "[Jenkins] Apache2 Reverse Proxy - Échec - ${params.SERVER_NAME}",
                     body: emailBody
             }
         }
@@ -318,4 +370,4 @@ pipeline {
             cleanWs()
         }
     }
-} 
+}

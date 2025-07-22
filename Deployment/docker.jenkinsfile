@@ -205,8 +205,6 @@ pipeline {
                         echo "Verbosité: ${params.ANSIBLE_VERBOSITY} ${env.ANSIBLE_VERBOSE_FLAG}"
                         
                         sh '''
-                            chmod 600 $SSH_PRIVATE_KEY_FILE
-                            
                             echo "Exécution du playbook Docker Compose..."
                             echo "Variables utilisées: ${ANSIBLE_EXTRA_VARS}"
                             echo "Flag de verbosité: ${ANSIBLE_VERBOSE_FLAG}"
