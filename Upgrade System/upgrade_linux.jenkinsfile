@@ -18,9 +18,44 @@ pipeline {
             ],
             description: 'Target server for deployment'
         )
+        choice(
+            name: 'ANSIBLE_VERBOSITY',
+            choices: [
+                '0',
+                '1',
+                '2',
+                '3',
+                '4'
+            ],
+            description: '''🔧 Niveau de verbosité Ansible:
+            
+            0 = Normal (défaut)
+            1 = Verbose (-v)
+            2 = Plus verbose (-vv)
+            3 = Debug (-vvv)
+            4 = Debug complet (-vvvv)'''
+        )
     }
     
     stages {
+        stage('Validation des paramètres') {
+            steps {
+                script {
+                    echo "🔍 Validation des paramètres de mise à jour système..."
+                    echo "Serveur cible: ${params.TARGET_SERVER}"
+                    echo "Verbosité Ansible: ${params.ANSIBLE_VERBOSITY}"
+                    
+                    // Déterminer le flag de verbosité
+                    def verbosityFlag = ''
+                    if (params.ANSIBLE_VERBOSITY != '0') {
+                        verbosityFlag = '-' + 'v' * params.ANSIBLE_VERBOSITY.toInteger()
+                    }
+                    env.ANSIBLE_VERBOSE_FLAG = verbosityFlag
+                    echo "Flag de verbosité: '${env.ANSIBLE_VERBOSE_FLAG}'"
+                }
+            }
+        }
+        
         stage('Vérification Ansible') {
             steps {
                 script {
@@ -36,12 +71,16 @@ pipeline {
         stage('Exécution du Playbook') {
             steps {
                 script {
-                    def extraVarsFlag = params.EXTRA_VARS ? "--extra-vars '${params.EXTRA_VARS}'" : ""
-                    
                     withCredentials([file(credentialsId: 'ssh-key-ansible-user-secret-file', variable: 'SSH_KEY_FILE')]) {
-                        // Utiliser writeFile et des variables d'environnement pour éviter l'interpolation
+                        echo "🚀 Démarrage de la mise à jour système..."
+                        echo "Serveur: ${params.TARGET_SERVER}"
+                        echo "Verbosité: ${params.ANSIBLE_VERBOSITY} ${env.ANSIBLE_VERBOSE_FLAG}"
+                        
                         sh '''
-                            ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini /tmp/ansibleJenkins/ansible/playbook/update_system_linux.yml -e HOST=${TARGET_SERVER}
+                            ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \
+                                /tmp/ansibleJenkins/ansible/playbook/update_system_linux.yml \
+                                -e HOST=${TARGET_SERVER} \
+                                ${ANSIBLE_VERBOSE_FLAG}
                         '''
                     }
                 }
@@ -49,148 +88,93 @@ pipeline {
         }
     }
     
-post {
-    always {
-        script {
-            // =================================================================
-            // GLOBAL VARIABLES DEFINITION - USED ACROSS ALL POST SECTIONS
-            // =================================================================
+    post {
+        always {
+            echo "Mise à jour système terminée"
             
-            // Store variables in environment for access in other post sections
-            env.POST_DEPLOYMENT_TYPE = env.DEPLOYMENT_TYPE ?: env.JOB_NAME ?: 'APPLICATION'
-            env.POST_PROJECT_NAME = params.PROJECT_NAME ?: params.PACKAGE_NAME ?: params.APPLICATION_NAME ?: 'Unknown'
-            env.POST_PROJECT_VERSION = params.PROJECT_VERSION ?: params.PACKAGE_VERSION ?: params.BUILD_VERSION ?: env.BUILD_VERSION ?: 'Latest'
-            env.POST_OPERATION_TYPE = env.OPERATION_TYPE ?: params.OPERATION_TYPE ?: 'DEPLOY'
-            env.POST_TARGET_ENVIRONMENT = params.TARGET_SERVER ?: params.ENVIRONMENT ?: params.TARGET_ENV ?: 'Unknown'
-            
-            // Optional fields
-            env.POST_DOCKER_IMAGE = params.DOCKER_IMAGE ?: env.DOCKER_IMAGE ?: ''
-            env.POST_DOCKER_TAG = params.DOCKER_TAG ?: env.DOCKER_TAG ?: ''
-            env.POST_APPLICATION_URL = params.APPLICATION_URL ?: env.APPLICATION_URL ?: ''
-            env.POST_DATABASE_VERSION = params.DATABASE_VERSION ?: env.DATABASE_VERSION ?: ''
-            env.POST_CUSTOM_FIELD_1 = params.CUSTOM_FIELD_1 ?: env.CUSTOM_FIELD_1 ?: ''
-            env.POST_CUSTOM_FIELD_2 = params.CUSTOM_FIELD_2 ?: env.CUSTOM_FIELD_2 ?: ''
-            
-            // Email configuration
-            env.POST_EMAIL_RECIPIENT = 'l.kieran95@gmail.com'
-            env.POST_EMAIL_SUBJECT_PREFIX = '[Upgrade System]'
-            
-            // Build timestamp
-            env.POST_BUILD_TIMESTAMP = new Date().format('yyyy-MM-dd HH:mm:ss')
-            
-            // =================================================================
-            // HELPER FUNCTIONS FOR EMAIL CONTENT
-            // =================================================================
-            
-            // Function to build optional fields for emails
-            env.POST_OPTIONAL_FIELDS = [
-                (env.POST_DOCKER_IMAGE ? "🐳 Docker Image: ${env.POST_DOCKER_IMAGE}" : ''),
-                (env.POST_DOCKER_TAG ? "🏷️ Docker Tag: ${env.POST_DOCKER_TAG}" : ''),
-                (env.POST_APPLICATION_URL ? "🌐 Application URL: ${env.POST_APPLICATION_URL}" : ''),
-                (env.POST_DATABASE_VERSION ? "💾 Database Version: ${env.POST_DATABASE_VERSION}" : ''),
-                (env.POST_CUSTOM_FIELD_1 ? "📝 Custom Field 1: ${env.POST_CUSTOM_FIELD_1}" : ''),
-                (env.POST_CUSTOM_FIELD_2 ? "📝 Custom Field 2: ${env.POST_CUSTOM_FIELD_2}" : '')
-            ].findAll { it != '' }.join('\n')
-            
-            // =================================================================
-            // REPORT GENERATION
-            // =================================================================
-            
-            echo "${env.POST_DEPLOYMENT_TYPE} completed"
-            
-            // Build comprehensive report using global variables
-            def report = """
-            === ${env.POST_DEPLOYMENT_TYPE} REPORT ===
-            Project: ${env.POST_PROJECT_NAME}
-            Version: ${env.POST_PROJECT_VERSION}
-            Operation: ${env.POST_OPERATION_TYPE}
-            Target: ${env.POST_TARGET_ENVIRONMENT}
-            Build: #${env.BUILD_NUMBER}
-            Date: ${env.POST_BUILD_TIMESTAMP}
-            Status: ${currentBuild.currentResult}
-            """ + 
-            (env.POST_DOCKER_IMAGE ? "\nDocker Image: ${env.POST_DOCKER_IMAGE}" : '') +
-            (env.POST_DOCKER_TAG ? "\nDocker Tag: ${env.POST_DOCKER_TAG}" : '') +
-            (env.POST_APPLICATION_URL ? "\nApplication URL: ${env.POST_APPLICATION_URL}" : '') +
-            (env.POST_DATABASE_VERSION ? "\nDatabase Version: ${env.POST_DATABASE_VERSION}" : '') +
-            (env.POST_CUSTOM_FIELD_1 ? "\nCustom Field 1: ${env.POST_CUSTOM_FIELD_1}" : '') +
-            (env.POST_CUSTOM_FIELD_2 ? "\nCustom Field 2: ${env.POST_CUSTOM_FIELD_2}" : '') +
-            """
+            // Créer un rapport détaillé
+            script {
+                def report = """
+                === RAPPORT DE MISE À JOUR SYSTÈME ===
+                Serveur Cible: ${params.TARGET_SERVER}
+                Verbosité Ansible: ${params.ANSIBLE_VERBOSITY}
+                Playbook: update_system_linux.yml
+                Inventaire: /tmp/ansibleJenkins/ansible/inventory/hosts.ini
+                Build: #${env.BUILD_NUMBER}
+                Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+                Statut: ${currentBuild.currentResult}
+                Durée: ${currentBuild.durationString ?: 'N/A'}
+                ==========================================
+                """
+                writeFile file: 'system_update_report.txt', text: report
+                archiveArtifacts artifacts: 'system_update_report.txt', allowEmptyArchive: true
+            }
+        }
+        success {
+            script {
+                echo "Mise à jour système réussie sur '${params.TARGET_SERVER}'"
+                
+                currentBuild.description = "Mise à jour système → ${params.TARGET_SERVER}"
+                
+                // Créer le corps de l'email en texte avec formatage
+                def emailBody = """
+                    🚀 MISE À JOUR SYSTÈME - SUCCÈS
 
-            Build URL: ${env.BUILD_URL}
-            Console Logs: ${env.BUILD_URL}console
-            ==========================================
-            """
-            
-            writeFile file: "${env.POST_DEPLOYMENT_TYPE.toLowerCase()}_deployment_report.txt", text: report
-            archiveArtifacts artifacts: "${env.POST_DEPLOYMENT_TYPE.toLowerCase()}_deployment_report.txt", allowEmptyArchive: true
+                    Serveur: ${params.TARGET_SERVER}
+                    Verbosité Ansible: ${params.ANSIBLE_VERBOSITY}
+                    Playbook: update_system_linux.yml
+                    Build: #${env.BUILD_NUMBER}
+                    Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+                    Durée: ${currentBuild.durationString ?: 'N/A'}
+
+                    📊 Détails du build: ${env.BUILD_URL}
+
+                    Configuration utilisée:
+                    - Inventaire: /tmp/ansibleJenkins/ansible/inventory/hosts.ini
+                    - Type d'opération: Mise à jour système complète
+                    - Flag de verbosité: ${env.ANSIBLE_VERBOSE_FLAG ?: 'Aucun'}
+
+                    ✅ La mise à jour système s'est terminée avec succès.
+                """
+                
+                mail to: 'l.kieran95@gmail.com',
+                    subject: "[Jenkins] Mise à jour système - ${params.TARGET_SERVER} - Succès",
+                    body: emailBody
+            }
+        }
+        failure {
+            script {
+                echo "Échec de la mise à jour système sur '${params.TARGET_SERVER}'"
+                
+                currentBuild.description = "Mise à jour système → ÉCHEC"
+                
+                // Créer le corps de l'email d'échec
+                def emailBody = """
+                    ❌ MISE À JOUR SYSTÈME - ÉCHEC
+
+                    Serveur: ${params.TARGET_SERVER}
+                    Verbosité Ansible: ${params.ANSIBLE_VERBOSITY}
+                    Playbook: update_system_linux.yml
+                    Build: #${env.BUILD_NUMBER}
+                    Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+
+                    🔍 Logs d'erreur: ${env.BUILD_URL}console
+
+                    Configuration utilisée:
+                    - Inventaire: /tmp/ansibleJenkins/ansible/inventory/hosts.ini
+                    - Type d'opération: Mise à jour système complète
+                    - Flag de verbosité: ${env.ANSIBLE_VERBOSE_FLAG ?: 'Aucun'}
+
+                    ⚠️ Veuillez vérifier les logs pour plus de détails.
+                """
+                
+                mail to: 'l.kieran95@gmail.com',
+                    subject: "[Jenkins] Mise à jour système - Échec - ${params.TARGET_SERVER}",
+                    body: emailBody
+            }
+        }
+        cleanup {
+            cleanWs()
         }
     }
-    
-    success {
-        script {
-            echo "${env.POST_OPERATION_TYPE} '${env.POST_PROJECT_NAME}' successfully!"
-            
-            // Set build description using global variables
-            currentBuild.description = "${env.POST_OPERATION_TYPE} ${env.POST_PROJECT_NAME} v${env.POST_PROJECT_VERSION} → ${env.POST_TARGET_ENVIRONMENT}"
-            
-            // Build email body using global variables and helper
-            def emailBody = """
-            🚀 ${env.POST_DEPLOYMENT_TYPE} - SUCCESS
-
-            Project: ${env.POST_PROJECT_NAME}
-            Version: ${env.POST_PROJECT_VERSION}
-            Operation: ${env.POST_OPERATION_TYPE}
-            Environment: ${env.POST_TARGET_ENVIRONMENT}
-            Build: #${env.BUILD_NUMBER}
-            Date: ${env.POST_BUILD_TIMESTAMP}
-
-            📊 Build details: ${env.BUILD_URL}
-
-            ${env.POST_OPTIONAL_FIELDS}
-
-            ✅ The ${env.POST_OPERATION_TYPE.toLowerCase()} operation completed successfully.
-            """
-            
-            mail to: env.POST_EMAIL_RECIPIENT,
-                subject: "${env.POST_EMAIL_SUBJECT_PREFIX} ${env.POST_DEPLOYMENT_TYPE} ${env.POST_OPERATION_TYPE} - ${env.POST_PROJECT_NAME} - Success",
-                body: emailBody
-        }
-    }
-    
-    failure {
-        script {
-            echo "Failed to ${env.POST_OPERATION_TYPE.toLowerCase()} '${env.POST_PROJECT_NAME}'"
-            
-            // Set build description using global variables
-            currentBuild.description = "${env.POST_OPERATION_TYPE} ${env.POST_PROJECT_NAME} v${env.POST_PROJECT_VERSION} → FAILED"
-            
-            // Build failure email body using global variables
-            def emailBody = """
-            ❌ ${env.POST_DEPLOYMENT_TYPE} - FAILURE
-
-            Project: ${env.POST_PROJECT_NAME}
-            Version: ${env.POST_PROJECT_VERSION}
-            Operation: ${env.POST_OPERATION_TYPE}
-            Environment: ${env.POST_TARGET_ENVIRONMENT}
-            Build: #${env.BUILD_NUMBER}
-            Date: ${env.POST_BUILD_TIMESTAMP}
-
-            🔍 Error logs: ${env.BUILD_URL}console
-
-            ${env.POST_OPTIONAL_FIELDS}
-
-            ⚠️ Please check the logs for more details.
-            """
-            
-            mail to: env.POST_EMAIL_RECIPIENT,
-                subject: "${env.POST_EMAIL_SUBJECT_PREFIX} ${env.POST_DEPLOYMENT_TYPE} ${env.POST_OPERATION_TYPE} - ${env.POST_PROJECT_NAME} - Failure",
-                body: emailBody
-        }
-    }
-    
-    cleanup {
-        cleanWs()
-    }
-}
 }

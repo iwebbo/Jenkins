@@ -18,9 +18,44 @@ pipeline {
             ],
             description: 'Target server for deployment'
         )
+        choice(
+            name: 'ANSIBLE_VERBOSITY',
+            choices: [
+                '0',
+                '1',
+                '2',
+                '3',
+                '4'
+            ],
+            description: '''🔧 Niveau de verbosité Ansible:
+            
+            0 = Normal (défaut)
+            1 = Verbose (-v)
+            2 = Plus verbose (-vv)
+            3 = Debug (-vvv)
+            4 = Debug complet (-vvvv)'''
+        )
     }
     
     stages {
+        stage('Validation des paramètres') {
+            steps {
+                script {
+                    echo "🔍 Validation des paramètres de mise à jour système..."
+                    echo "Serveur cible: ${params.TARGET_SERVER}"
+                    echo "Verbosité Ansible: ${params.ANSIBLE_VERBOSITY}"
+                    
+                    // Déterminer le flag de verbosité
+                    def verbosityFlag = ''
+                    if (params.ANSIBLE_VERBOSITY != '0') {
+                        verbosityFlag = '-' + 'v' * params.ANSIBLE_VERBOSITY.toInteger()
+                    }
+                    env.ANSIBLE_VERBOSE_FLAG = verbosityFlag
+                    echo "Flag de verbosité: '${env.ANSIBLE_VERBOSE_FLAG}'"
+                }
+            }
+        }
+        
         stage('Vérification Ansible') {
             steps {
                 script {
@@ -37,8 +72,15 @@ pipeline {
             steps {
                 script {
                     withCredentials([file(credentialsId: 'ssh-key-ansible-user-secret-file', variable: 'SSH_KEY_FILE')]) {
+                        echo "🚀 Démarrage de la mise à jour système..."
+                        echo "Serveur: ${params.TARGET_SERVER}"
+                        echo "Verbosité: ${params.ANSIBLE_VERBOSITY} ${env.ANSIBLE_VERBOSE_FLAG}"
+                        
                         sh '''
-                            ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini /tmp/ansibleJenkins/ansible/playbook/update_system_linux.yml -e HOST=${TARGET_SERVER}
+                            ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \
+                                /tmp/ansibleJenkins/ansible/playbook/update_system_linux.yml \
+                                -e HOST=${TARGET_SERVER} \
+                                ${ANSIBLE_VERBOSE_FLAG}
                         '''
                     }
                 }
@@ -46,87 +88,93 @@ pipeline {
         }
     }
     
-post {
-    always {
-        echo "Mise à jour système terminée"
-        
-        // Créer un rapport détaillé
-        script {
-            def report = """
-            === RAPPORT DE MISE À JOUR SYSTÈME ===
-            Serveur Cible: ${params.TARGET_SERVER}
-            Playbook: update_system_linux.yml
-            Inventaire: /tmp/ansibleJenkins/ansible/inventory/hosts.ini
-            Build: #${env.BUILD_NUMBER}
-            Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
-            Statut: ${currentBuild.currentResult}
-            Durée: ${currentBuild.durationString ?: 'N/A'}
-            ==========================================
-            """
-            writeFile file: 'system_update_report.txt', text: report
-            archiveArtifacts artifacts: 'system_update_report.txt', allowEmptyArchive: true
-        }
-    }
-    success {
-        script {
-            echo "Mise à jour système réussie sur '${params.TARGET_SERVER}'"
+    post {
+        always {
+            echo "Mise à jour système terminée"
             
-            currentBuild.description = "Mise à jour système → ${params.TARGET_SERVER}"
-            
-            // Créer le corps de l'email en texte avec formatage
-            def emailBody = """
-                🚀 MISE À JOUR SYSTÈME - SUCCÈS
-
-                Serveur: ${params.TARGET_SERVER}
+            // Créer un rapport détaillé
+            script {
+                def report = """
+                === RAPPORT DE MISE À JOUR SYSTÈME ===
+                Serveur Cible: ${params.TARGET_SERVER}
+                Verbosité Ansible: ${params.ANSIBLE_VERBOSITY}
                 Playbook: update_system_linux.yml
+                Inventaire: /tmp/ansibleJenkins/ansible/inventory/hosts.ini
                 Build: #${env.BUILD_NUMBER}
                 Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+                Statut: ${currentBuild.currentResult}
                 Durée: ${currentBuild.durationString ?: 'N/A'}
-
-                📊 Détails du build: ${env.BUILD_URL}
-
-                Configuration utilisée:
-                - Inventaire: /tmp/ansibleJenkins/ansible/inventory/hosts.ini
-                - Type d'opération: Mise à jour système complète
-
-                ✅ La mise à jour système s'est terminée avec succès.
-            """
-            
-            mail to: 'l.kieran95@gmail.com',
-                subject: "[Jenkins] Mise à jour système - ${params.TARGET_SERVER} - Succès",
-                body: emailBody
+                ==========================================
+                """
+                writeFile file: 'system_update_report.txt', text: report
+                archiveArtifacts artifacts: 'system_update_report.txt', allowEmptyArchive: true
+            }
         }
-    }
-    failure {
-        script {
-            echo "Échec de la mise à jour système sur '${params.TARGET_SERVER}'"
-            
-            currentBuild.description = "Mise à jour système → ÉCHEC"
-            
-            // Créer le corps de l'email d'échec
-            def emailBody = """
-                ❌ MISE À JOUR SYSTÈME - ÉCHEC
+        success {
+            script {
+                echo "Mise à jour système réussie sur '${params.TARGET_SERVER}'"
+                
+                currentBuild.description = "Mise à jour système → ${params.TARGET_SERVER}"
+                
+                // Créer le corps de l'email en texte avec formatage
+                def emailBody = """
+                    🚀 MISE À JOUR SYSTÈME - SUCCÈS
 
-                Serveur: ${params.TARGET_SERVER}
-                Playbook: update_system_linux.yml
-                Build: #${env.BUILD_NUMBER}
-                Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+                    Serveur: ${params.TARGET_SERVER}
+                    Verbosité Ansible: ${params.ANSIBLE_VERBOSITY}
+                    Playbook: update_system_linux.yml
+                    Build: #${env.BUILD_NUMBER}
+                    Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+                    Durée: ${currentBuild.durationString ?: 'N/A'}
 
-                🔍 Logs d'erreur: ${env.BUILD_URL}console
+                    📊 Détails du build: ${env.BUILD_URL}
 
-                Configuration utilisée:
-                - Inventaire: /tmp/ansibleJenkins/ansible/inventory/hosts.ini
-                - Type d'opération: Mise à jour système complète
+                    Configuration utilisée:
+                    - Inventaire: /tmp/ansibleJenkins/ansible/inventory/hosts.ini
+                    - Type d'opération: Mise à jour système complète
+                    - Flag de verbosité: ${env.ANSIBLE_VERBOSE_FLAG ?: 'Aucun'}
 
-                ⚠️ Veuillez vérifier les logs pour plus de détails.
-            """
-            
-            mail to: 'l.kieran95@gmail.com',
-                subject: "[Jenkins] Mise à jour système - Échec - ${params.TARGET_SERVER}",
-                body: emailBody
+                    ✅ La mise à jour système s'est terminée avec succès.
+                """
+                
+                mail to: 'l.kieran95@gmail.com',
+                    subject: "[Jenkins] Mise à jour système - ${params.TARGET_SERVER} - Succès",
+                    body: emailBody
+            }
         }
-    }
-    cleanup {
-        cleanWs()
+        failure {
+            script {
+                echo "Échec de la mise à jour système sur '${params.TARGET_SERVER}'"
+                
+                currentBuild.description = "Mise à jour système → ÉCHEC"
+                
+                // Créer le corps de l'email d'échec
+                def emailBody = """
+                    ❌ MISE À JOUR SYSTÈME - ÉCHEC
+
+                    Serveur: ${params.TARGET_SERVER}
+                    Verbosité Ansible: ${params.ANSIBLE_VERBOSITY}
+                    Playbook: update_system_linux.yml
+                    Build: #${env.BUILD_NUMBER}
+                    Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+
+                    🔍 Logs d'erreur: ${env.BUILD_URL}console
+
+                    Configuration utilisée:
+                    - Inventaire: /tmp/ansibleJenkins/ansible/inventory/hosts.ini
+                    - Type d'opération: Mise à jour système complète
+                    - Flag de verbosité: ${env.ANSIBLE_VERBOSE_FLAG ?: 'Aucun'}
+
+                    ⚠️ Veuillez vérifier les logs pour plus de détails.
+                """
+                
+                mail to: 'l.kieran95@gmail.com',
+                    subject: "[Jenkins] Mise à jour système - Échec - ${params.TARGET_SERVER}",
+                    body: emailBody
+            }
+        }
+        cleanup {
+            cleanWs()
+        }
     }
 }
