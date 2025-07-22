@@ -152,7 +152,7 @@ pipeline {
                     
                     // Variables principales Docker
                     ansibleVars << "docker_run_var=\"${params.DOCKER_RUN_COMMAND}\""
-                    ansibleVars << "docker_images=[{name: \"${params.DOCKER_IMAGE_NAME}\"}]"
+                    ansibleVars << "docker_images=\"${params.DOCKER_IMAGE_NAME}\""
                     
                     // Variables supplémentaires si fournies
                     if (params.ADDITIONAL_DOCKER_VARS.trim() != '') {
