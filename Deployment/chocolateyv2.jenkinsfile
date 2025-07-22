@@ -192,12 +192,7 @@ pipeline {
                                 ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \
                                     /tmp/ansibleJenkins/ansible/playbook/${SELECTED_PLAYBOOK} \
                                     -e HOST=${TARGET_SERVER} \
-                                    -e package_name=${PACKAGE_NAME} \
-                                    -e package_version=${PACKAGE_VERSION} \
-                                    -e package_state=${PACKAGE_STATE} \
-                                    -e force_install=${FORCE_INSTALL} \
-                                    -e chocolatey_source=${CHOCOLATEY_SOURCE} \
-                                    -e chocolatey_timeout=${CHOCOLATEY_TIMEOUT}
+                                    -e "${ANSIBLE_EXTRA_VARS}"
                             '''
                         } else if (params.PACKAGE_STATE == 'absent') {
                             echo "🗑️ Starting Chocolatey package UNINSTALLATION..."
@@ -215,9 +210,7 @@ pipeline {
                                 ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \
                                     /tmp/ansibleJenkins/ansible/playbook/${SELECTED_PLAYBOOK} \
                                     -e HOST=${TARGET_SERVER} \
-                                    -e package_name=${PACKAGE_NAME} \
-                                    -e package_state=${PACKAGE_STATE} \
-                                    -e force_install=${FORCE_INSTALL}
+                                    -e "${ANSIBLE_EXTRA_VARS}"
                             '''
                         } else {
                             error("Unsupported package state: ${params.PACKAGE_STATE}")

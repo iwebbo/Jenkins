@@ -7,16 +7,11 @@ pipeline {
         ANSIBLE_FORKS = '2'  // Optimisé pour Raspberry Pi
         ANSIBLE_CONFIG = '/tmp/ansibleJenkins/ansible/ansible.cfg'
         // Variables spécifiques pour le template post
-        DEPLOYMENT_TYPE = 'DOCKER'
-        OPERATION_TYPE = 'DEPLOY'
+        DEPLOYMENT_TYPE = 'DOCKER_COMPOSE'
+        OPERATION_TYPE = 'MANAGE'
     }
     
     parameters {
-        choice(
-            name: 'PLAYBOOK_ACTION',
-            choices: ['install', 'manage'],
-            description: 'Action à effectuer sur Docker'
-        )
         choice(
             name: 'TARGET_SERVER',
             choices: [
@@ -31,7 +26,7 @@ pipeline {
         text(
             name: 'DOCKER_RUN_COMMAND',
             defaultValue: '',
-            description: '''🐳 Commande Docker Run (UNIQUEMENT si action = manage):
+            description: '''🐳 Commande Docker Run à convertir en Docker Compose:
             
             EXEMPLE WINDOWS:
             docker run -p 3001:3001 --name anythingllm -ti --rm -v G:\\docker\\docker-data\\anything-llm:/app/data mintplexlabs/anythingllm:latest
@@ -39,22 +34,46 @@ pipeline {
             EXEMPLE LINUX:
             docker run -d -it --restart=unless-stopped -v $(pwd)/myelectricaldata/data:/data -p 5000:5000 -e TZ='Europe/Paris' m4dm4rtig4n/myelectricaldata:latest
 
-            ⚠️ Ce champ sera ignoré pour l'action "install"'''
+            ✅ Cette commande sera automatiquement convertie en docker-compose.yml'''
         )
         string(
             name: 'DOCKER_IMAGE_NAME',
             defaultValue: '',
-            description: '🏷️ Nom de l\'image Docker (ex: eclipse-mosquitto, nginx, mysql) - UNIQUEMENT pour action "manage"'
+            description: '🏷️ Nom du container/service (ex: keycloak, nginx, mysql, redis)'
         )
-        text(
-            name: 'ADDITIONAL_DOCKER_VARS',
+        string(
+            name: 'DOCKER_COMPOSE_PATH',
             defaultValue: '',
-            description: '''⚙️ Variables Ansible supplémentaires (optionnel):
-            Format: key=value séparées par des espaces ou nouvelles lignes
-            Exemple: 
-            container_restart_policy=unless-stopped
-            network_mode=bridge
-            environment_vars=TZ=Europe/Paris'''
+            description: '''📁 Chemin où créer le fichier docker-compose.yml:
+            
+            EXEMPLES WINDOWS:
+            C:/docker-compose
+            D:/projects/keycloak
+            C:/temp/compose
+            
+            EXEMPLES LINUX:
+            /opt/docker-compose
+            /home/user/projects/webapp
+            /tmp/compose
+            
+            ⚠️ Laisser vide pour utiliser le chemin par défaut selon l'OS'''
+        )
+        choice(
+            name: 'ANSIBLE_VERBOSITY',
+            choices: [
+                '0',
+                '1',
+                '2',
+                '3',
+                '4'
+            ],
+            description: '''🔧 Niveau de verbosité Ansible:
+            
+            0 = Normal (défaut)
+            1 = Verbose (-v)
+            2 = Plus verbose (-vv)
+            3 = Debug (-vvv)
+            4 = Debug complet (-vvvv)'''
         )
     }
     
@@ -62,9 +81,17 @@ pipeline {
         stage('Validation des paramètres') {
             steps {
                 script {
-                    echo "🔍 Validation des paramètres Docker..."
-                    echo "Action sélectionnée: ${params.PLAYBOOK_ACTION}"
+                    echo "🔍 Validation des paramètres Docker Compose..."
                     echo "Serveur cible: ${params.TARGET_SERVER}"
+                    echo "Verbosité Ansible: ${params.ANSIBLE_VERBOSITY}"
+                    
+                    // Déterminer le flag de verbosité
+                    def verbosityFlag = ''
+                    if (params.ANSIBLE_VERBOSITY != '0') {
+                        verbosityFlag = '-' + 'v' * params.ANSIBLE_VERBOSITY.toInteger()
+                    }
+                    env.ANSIBLE_VERBOSE_FLAG = verbosityFlag
+                    echo "Flag de verbosité: '${env.ANSIBLE_VERBOSE_FLAG}'"
                     
                     // Déterminer le type de serveur
                     def isWindows = params.TARGET_SERVER.toLowerCase().contains('windows')
@@ -72,45 +99,36 @@ pipeline {
                     echo "Type de serveur détecté: ${serverType}"
                     env.SERVER_TYPE = serverType
                     
-                    // Déterminer le playbook selon l'action ET le type de serveur
-                    def selectedPlaybook = ""
-                    if (params.PLAYBOOK_ACTION == 'install') {
-                        selectedPlaybook = isWindows ? 'deploy_docker_windows.yml' : 'deploy_docker_linux.yml'
-                        env.OPERATION_TYPE = 'INSTALL'
-                    } else { // manage
-                        selectedPlaybook = isWindows ? 'deploy_docker_container_windows.yml' : 'deploy_docker_container_linux.yml'
-                        env.OPERATION_TYPE = 'MANAGE'
-                    }
-                    
-                    // Stocker le playbook sélectionné
+                    // Déterminer le playbook selon le type de serveur
+                    def selectedPlaybook = isWindows ? 'deploy_docker_container_windows.yml' : 'deploy_docker_container_linux.yml'
                     env.SELECTED_PLAYBOOK = selectedPlaybook
                     echo "Playbook sélectionné: ${env.SELECTED_PLAYBOOK}"
                     
-                    // Validation pour l'action manage
-                    if (params.PLAYBOOK_ACTION == 'manage') {
-                        if (params.DOCKER_RUN_COMMAND.trim() == '') {
-                            error("La commande Docker Run est obligatoire pour l'action 'manage'")
-                        }
-                        if (params.DOCKER_IMAGE_NAME.trim() == '') {
-                            error("Le nom de l'image Docker est obligatoire pour l'action 'manage'")
-                        }
-                        
-                        echo "✅ Paramètres Docker validés:"
-                        echo "   Image: ${params.DOCKER_IMAGE_NAME}"
-                        echo "   Commande: ${params.DOCKER_RUN_COMMAND}"
-                        
-                        // Stocker les variables pour le post
-                        env.DOCKER_IMAGE_DEPLOYED = params.DOCKER_IMAGE_NAME
-                        env.DOCKER_COMMAND_USED = params.DOCKER_RUN_COMMAND
-                        
-                    } else {
-                        echo "Action 'install' - installation de Docker Engine"
-                        if (params.DOCKER_RUN_COMMAND.trim() != '' || params.DOCKER_IMAGE_NAME.trim() != '') {
-                            echo "⚠️ Les paramètres Docker sont ignorés pour l'action 'install'"
-                        }
-                        env.DOCKER_IMAGE_DEPLOYED = 'Docker Engine'
-                        env.DOCKER_COMMAND_USED = 'Installation'
+                    // Validation des paramètres obligatoires
+                    if (params.DOCKER_RUN_COMMAND.trim() == '') {
+                        error("La commande Docker Run est obligatoire")
                     }
+                    if (params.DOCKER_IMAGE_NAME.trim() == '') {
+                        error("Le nom du container/service est obligatoire")
+                    }
+                    
+                    echo "✅ Paramètres Docker validés:"
+                    echo "   Container/Service: ${params.DOCKER_IMAGE_NAME}"
+                    echo "   Commande: ${params.DOCKER_RUN_COMMAND}"
+                    
+                    // Déterminer le chemin de composition selon l'OS
+                    def defaultComposePath = isWindows ? 'C:/docker-compose' : '/opt/docker-compose'
+                    def composePath = params.DOCKER_COMPOSE_PATH.trim() ?: defaultComposePath
+                    
+                    // Normaliser le chemin pour Ansible (toujours avec /)
+                    def normalizedPath = composePath.replaceAll('\\\\', '/')
+                    env.DOCKER_COMPOSE_PATH = normalizedPath
+                    
+                    echo "   Chemin Docker Compose: ${env.DOCKER_COMPOSE_PATH}"
+                    
+                    // Stocker les variables pour le post
+                    env.DOCKER_IMAGE_DEPLOYED = params.DOCKER_IMAGE_NAME
+                    env.DOCKER_COMMAND_USED = params.DOCKER_RUN_COMMAND
                 }
             }
         }
@@ -140,238 +158,166 @@ pipeline {
         }
         
         stage('Préparation des variables Ansible') {
-            when {
-                expression { params.PLAYBOOK_ACTION == 'manage' }
-            }
             steps {
                 script {
-                    echo "🔧 Préparation des variables Ansible pour la gestion Docker..."
+                    echo "🔧 Préparation des variables Ansible pour Docker Compose..."
                     
-                    // Construire les variables Ansible
+                    // Construire la structure docker_images
+                    def dockerImagesJson = """
+                    [{
+                        "name": "${params.DOCKER_IMAGE_NAME}",
+                        "container_name": "${params.DOCKER_IMAGE_NAME}",
+                        "docker_run_var": "${params.DOCKER_RUN_COMMAND}",
+                        "ports": "",
+                        "volumes": "",
+                        "restart_policy": "unless-stopped"
+                    }]
+                    """
+                    
+                    // Nettoyer le JSON (enlever les retours à la ligne)
+                    def cleanDockerImages = dockerImagesJson.replaceAll('\n', '').replaceAll('\\s+', ' ').trim()
+                    
+                    // Variables Ansible principales
                     def ansibleVars = []
-                    
-                    // Variables principales Docker
-                    ansibleVars << "docker_run_var=\"${params.DOCKER_RUN_COMMAND}\""
-                    ansibleVars << "docker_images=\"${params.DOCKER_IMAGE_NAME}\""
-                    
-                    // Variables supplémentaires si fournies
-                    if (params.ADDITIONAL_DOCKER_VARS.trim() != '') {
-                        echo "Variables supplémentaires fournies:"
-                        echo "${params.ADDITIONAL_DOCKER_VARS}"
-                        
-                        // Nettoyer et formater les variables supplémentaires
-                        def cleanVars = params.ADDITIONAL_DOCKER_VARS
-                            .replaceAll('\n', ' ')
-                            .replaceAll('\r', '')
-                            .trim()
-                        
-                        ansibleVars << cleanVars
-                    }
+                    ansibleVars << "docker_images='${cleanDockerImages}'"
+                    ansibleVars << "docker_compose_path='${env.DOCKER_COMPOSE_PATH}'"
                     
                     // Stocker toutes les variables formatées
                     env.ANSIBLE_EXTRA_VARS = ansibleVars.join(' ')
                     
                     echo "✅ Variables Ansible préparées:"
-                    echo "${env.ANSIBLE_EXTRA_VARS}"
+                    echo "   docker_images: Structure JSON avec ${params.DOCKER_IMAGE_NAME}"
+                    echo "   docker_compose_path: ${env.DOCKER_COMPOSE_PATH}"
+                    echo "Variables complètes: ${env.ANSIBLE_EXTRA_VARS}"
                 }
             }
         }
         
-        stage('Exécution du Playbook Docker') {
+        stage('Exécution du Playbook Docker Compose') {
             steps {
                 script {
                     withCredentials([file(credentialsId: 'ssh-key-ansible-user-secret-file', variable: 'SSH_PRIVATE_KEY_FILE')]) {
-                        if (params.PLAYBOOK_ACTION == 'install') {
-                            echo "🚀 Démarrage de l'installation Docker Engine..."
-                            echo "Serveur: ${params.TARGET_SERVER} (${env.SERVER_TYPE})"
-                            echo "Playbook: ${env.SELECTED_PLAYBOOK}"
+                        echo "🐳 Démarrage de la gestion Docker Compose..."
+                        echo "Serveur: ${params.TARGET_SERVER} (${env.SERVER_TYPE})"
+                        echo "Service: ${params.DOCKER_IMAGE_NAME}"
+                        echo "Chemin: ${env.DOCKER_COMPOSE_PATH}"
+                        echo "Playbook: ${env.SELECTED_PLAYBOOK}"
+                        echo "Verbosité: ${params.ANSIBLE_VERBOSITY} ${env.ANSIBLE_VERBOSE_FLAG}"
+                        
+                        sh '''
+                            chmod 600 $SSH_PRIVATE_KEY_FILE
                             
-                            sh '''
-                                chmod 600 $SSH_PRIVATE_KEY_FILE
-                                
-                                echo "Exécution du playbook d'installation..."
-                                
-                                # Commande Ansible pour installation
-                                ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \
-                                    /tmp/ansibleJenkins/ansible/playbook/${SELECTED_PLAYBOOK} \
-                                    -e HOST=${TARGET_SERVER}
-                            '''
-                        } else {
-                            echo "🐳 Démarrage de la gestion des conteneurs Docker..."
-                            echo "Serveur: ${params.TARGET_SERVER} (${env.SERVER_TYPE})"
-                            echo "Image: ${params.DOCKER_IMAGE_NAME}"
-                            echo "Playbook: ${env.SELECTED_PLAYBOOK}"
+                            echo "Exécution du playbook Docker Compose..."
+                            echo "Variables utilisées: ${ANSIBLE_EXTRA_VARS}"
+                            echo "Flag de verbosité: ${ANSIBLE_VERBOSE_FLAG}"
                             
-                            sh '''
-                                chmod 600 $SSH_PRIVATE_KEY_FILE
-                                
-                                echo "Exécution du playbook de gestion des conteneurs..."
-                                echo "Variables utilisées: ${ANSIBLE_EXTRA_VARS}"
-                                
-                                # Commande Ansible pour gestion des conteneurs
-                                ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \
-                                    /tmp/ansibleJenkins/ansible/playbook/${SELECTED_PLAYBOOK} \
-                                    -e HOST=${TARGET_SERVER} \
-                                    --extra-vars "${ANSIBLE_EXTRA_VARS}"
-                            '''
-                        }
+                            # Commande Ansible pour gestion Docker Compose
+                            ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \
+                                /tmp/ansibleJenkins/ansible/playbook/${SELECTED_PLAYBOOK} \
+                                -e HOST=${TARGET_SERVER} \
+                                -e "${ANSIBLE_EXTRA_VARS}" \
+                                ${ANSIBLE_VERBOSE_FLAG}
+                        '''
                     }
                 }
             }
         }
     }
     
-    post {
-        always {
-            script {
-                // =================================================================
-                // CONFIGURATION ADAPTÉE POUR DOCKER
-                // =================================================================
-                
-                // Variables spécifiques Docker
-                env.POST_DEPLOYMENT_TYPE = 'DOCKER'
-                env.POST_PROJECT_NAME = params.DOCKER_IMAGE_NAME ?: 'Docker Engine'
-                env.POST_PROJECT_VERSION = 'Latest'
-                env.POST_OPERATION_TYPE = env.OPERATION_TYPE ?: 'DEPLOY'
-                env.POST_TARGET_ENVIRONMENT = params.TARGET_SERVER
-                
-                // Variables Docker spécifiques
-                env.POST_DOCKER_IMAGE = params.DOCKER_IMAGE_NAME ?: ''
-                env.POST_DOCKER_TAG = 'latest'  // Par défaut
-                env.POST_APPLICATION_URL = ''
-                env.POST_DATABASE_VERSION = ''
-                
-                // Variables personnalisées Docker
-                env.POST_CUSTOM_FIELD_1 = params.PLAYBOOK_ACTION.toUpperCase()  // INSTALL ou MANAGE
-                env.POST_CUSTOM_FIELD_2 = env.SERVER_TYPE  // Windows ou Linux
-                
-                // Configuration email
-                env.POST_EMAIL_RECIPIENT = 'l.kieran95@gmail.com'
-                env.POST_EMAIL_SUBJECT_PREFIX = '[DOCKER JENKINS]'
-                
-                // Build timestamp
-                env.POST_BUILD_TIMESTAMP = new Date().format('yyyy-MM-dd HH:mm:ss')
-                
-                // Variables pour le rapport
-                def dockerAction = params.PLAYBOOK_ACTION.toUpperCase()
-                def dockerImage = params.DOCKER_IMAGE_NAME ?: 'Docker Engine'
-                def dockerCommand = params.DOCKER_RUN_COMMAND ?: 'Installation Only'
-                
-                // =================================================================
-                // REPORT GENERATION SPÉCIFIQUE DOCKER
-                // =================================================================
-                
-                echo "Docker ${dockerAction} deployment completed"
-                
-                def report = """
-                === DOCKER ${dockerAction} DEPLOYMENT REPORT ===
-                Action: ${dockerAction}
-                Target Server: ${params.TARGET_SERVER} (${env.SERVER_TYPE})
-                Docker Image: ${dockerImage}
-                Playbook: ${env.SELECTED_PLAYBOOK}
-                Build: #${env.BUILD_NUMBER}
-                Date: ${env.POST_BUILD_TIMESTAMP}
-                Status: ${currentBuild.currentResult}
-                Job: ${env.JOB_NAME}
-                Started by: ${env.BUILD_USER ?: 'System'}
-                Duration: ${currentBuild.durationString ?: 'N/A'}
-
-                Docker Configuration:
-                ${dockerAction == 'MANAGE' ? "Command: ${dockerCommand}" : "Installation: Docker Engine"}
-                ${params.ADDITIONAL_DOCKER_VARS ? "Additional Vars: ${params.ADDITIONAL_DOCKER_VARS}" : "No additional variables"}
-
-                Build URL: ${env.BUILD_URL}
-                Console Logs: ${env.BUILD_URL}console
-                ==========================================
-                """
-                
-                writeFile file: "docker_${dockerAction.toLowerCase()}_deployment_report.txt", text: report
-                archiveArtifacts artifacts: "docker_${dockerAction.toLowerCase()}_deployment_report.txt", allowEmptyArchive: true
-            }
-        }
+post {
+    always {
+        echo "Gestion Docker Compose terminée"
         
-        success {
-            script {
-                def dockerAction = params.PLAYBOOK_ACTION.toUpperCase()
-                def dockerImage = params.DOCKER_IMAGE_NAME ?: 'Docker Engine'
-                
-                echo "${dockerAction} '${dockerImage}' completed successfully!"
-                
-                // Set build description
-                currentBuild.description = "${dockerAction} ${dockerImage} → ${params.TARGET_SERVER} (${env.SERVER_TYPE})"
-                currentBuild.displayName = "#${env.BUILD_NUMBER} - ${dockerAction} ${dockerImage}"
-                
-                // Build email body
-                def emailBody = """
-                🐳 DOCKER ${dockerAction} - SUCCESS
-
-                Action: ${dockerAction}
-                Target: ${params.TARGET_SERVER} (${env.SERVER_TYPE})
-                Docker Image: ${dockerImage}
-                Build: #${env.BUILD_NUMBER}
-                Date: ${env.POST_BUILD_TIMESTAMP}
-                Job: ${env.JOB_NAME}
-                Duration: ${currentBuild.durationString ?: 'N/A'}
-
-                📊 Build details: ${env.BUILD_URL}
-
-                Configuration Details:
-                🎯 Playbook: ${env.SELECTED_PLAYBOOK}
-                ${dockerAction == 'MANAGE' ? "🚀 Command: ${params.DOCKER_RUN_COMMAND}" : "⚙️ Installation: Docker Engine Setup"}
-                ${params.ADDITIONAL_DOCKER_VARS ? "📝 Additional Variables: ${params.ADDITIONAL_DOCKER_VARS}" : ""}
-
-                ✅ The Docker ${dockerAction.toLowerCase()} operation completed successfully.
-                """
-                
-                mail to: env.POST_EMAIL_RECIPIENT,
-                    subject: "${env.POST_EMAIL_SUBJECT_PREFIX} ${dockerAction} - ${dockerImage} - Success",
-                    body: emailBody
-            }
-        }
-        
-        failure {
-            script {
-                def dockerAction = params.PLAYBOOK_ACTION.toUpperCase()
-                def dockerImage = params.DOCKER_IMAGE_NAME ?: 'Docker Engine'
-                
-                echo "Failed to ${dockerAction.toLowerCase()} '${dockerImage}'"
-                
-                // Set build description
-                currentBuild.description = "${dockerAction} ${dockerImage} → ${params.TARGET_SERVER} → FAILED"
-                currentBuild.displayName = "#${env.BUILD_NUMBER} - ${dockerAction} ${dockerImage} - FAILED"
-                
-                // Build failure email body
-                def emailBody = """
-                ❌ DOCKER ${dockerAction} - FAILURE
-
-                Action: ${dockerAction}
-                Target: ${params.TARGET_SERVER} (${env.SERVER_TYPE})
-                Docker Image: ${dockerImage}
-                Build: #${env.BUILD_NUMBER}
-                Date: ${env.POST_BUILD_TIMESTAMP}
-                Job: ${env.JOB_NAME}
-
-                🔍 Error logs: ${env.BUILD_URL}console
-
-                Failed Configuration:
-                🎯 Playbook: ${env.SELECTED_PLAYBOOK}
-                ${dockerAction == 'MANAGE' ? "🚀 Command: ${params.DOCKER_RUN_COMMAND}" : "⚙️ Installation: Docker Engine Setup"}
-                ${params.ADDITIONAL_DOCKER_VARS ? "📝 Additional Variables: ${params.ADDITIONAL_DOCKER_VARS}" : ""}
-
-                Ansible Variables Generated:
-                ${env.ANSIBLE_EXTRA_VARS ?: 'No variables generated'}
-
-                ⚠️ Please check the logs for more details.
-                """
-                
-                mail to: env.POST_EMAIL_RECIPIENT,
-                    subject: "${env.POST_EMAIL_SUBJECT_PREFIX} ${dockerAction} - ${dockerImage} - Failure",
-                    body: emailBody
-            }
-        }
-        
-        cleanup {
-            cleanWs()
+        // Créer un rapport détaillé
+        script {
+            def report = """
+            === RAPPORT DOCKER COMPOSE DEPLOYMENT ===
+            Service: ${params.DOCKER_IMAGE_NAME}
+            Commande Docker: ${params.DOCKER_RUN_COMMAND ?: 'Non spécifiée'}
+            Serveur Cible: ${params.TARGET_SERVER}
+            Type Serveur: ${env.SERVER_TYPE ?: 'Non défini'}
+            Chemin Compose: ${env.DOCKER_COMPOSE_PATH ?: 'Non défini'}
+            Playbook: ${env.SELECTED_PLAYBOOK ?: 'Non défini'}
+            Variables Ansible: ${env.ANSIBLE_EXTRA_VARS ?: 'Non générées'}
+            Build: #${env.BUILD_NUMBER}
+            Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+            Statut: ${currentBuild.currentResult}
+            Durée: ${currentBuild.durationString ?: 'N/A'}
+            ==========================================
+            """
+            writeFile file: 'docker_compose_deployment_report.txt', text: report
+            archiveArtifacts artifacts: 'docker_compose_deployment_report.txt', allowEmptyArchive: true
         }
     }
+    success {
+        script {
+            echo "Service Docker Compose '${params.DOCKER_IMAGE_NAME}' déployé avec succès!"
+            
+            currentBuild.description = "Docker Compose ${params.DOCKER_IMAGE_NAME} → ${params.TARGET_SERVER}"
+            
+            // Créer le corps de l'email en texte avec formatage
+            def emailBody = """
+                🐳 DOCKER COMPOSE DEPLOYMENT - SUCCÈS
+
+                Service: ${params.DOCKER_IMAGE_NAME}
+                Commande: ${params.DOCKER_RUN_COMMAND ?: 'Non spécifiée'}
+                Serveur: ${params.TARGET_SERVER}
+                Type Serveur: ${env.SERVER_TYPE ?: 'Non défini'}
+                Chemin Compose: ${env.DOCKER_COMPOSE_PATH ?: 'Non défini'}
+                Build: #${env.BUILD_NUMBER}
+                Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+                Durée: ${currentBuild.durationString ?: 'N/A'}
+
+                📊 Détails du build: ${env.BUILD_URL}
+
+                Configuration utilisée:
+                - Playbook: ${env.SELECTED_PLAYBOOK ?: 'Non défini'}
+                - Variables Ansible: ${env.ANSIBLE_EXTRA_VARS ? 'Générées' : 'Non générées'}
+
+                ✅ Le déploiement Docker Compose s'est terminé avec succès.
+            """
+            
+            mail to: 'l.kieran95@gmail.com',
+                subject: "[Jenkins] Docker Compose - ${params.DOCKER_IMAGE_NAME} - Succès",
+                body: emailBody
+        }
+    }
+    failure {
+        script {
+            echo "Échec du déploiement Docker Compose '${params.DOCKER_IMAGE_NAME}'"
+            
+            currentBuild.description = "Docker Compose ${params.DOCKER_IMAGE_NAME} → ÉCHEC"
+            
+            // Créer le corps de l'email d'échec
+            def emailBody = """
+                ❌ DOCKER COMPOSE DEPLOYMENT - ÉCHEC
+
+                Service: ${params.DOCKER_IMAGE_NAME}
+                Commande: ${params.DOCKER_RUN_COMMAND ?: 'Non spécifiée'}
+                Serveur: ${params.TARGET_SERVER}
+                Type Serveur: ${env.SERVER_TYPE ?: 'Non défini'}
+                Chemin Compose: ${env.DOCKER_COMPOSE_PATH ?: 'Non défini'}
+                Build: #${env.BUILD_NUMBER}
+                Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+
+                🔍 Logs d'erreur: ${env.BUILD_URL}console
+
+                Configuration utilisée:
+                - Playbook: ${env.SELECTED_PLAYBOOK ?: 'Non défini'}
+
+                Variables Ansible générées:
+                ${env.ANSIBLE_EXTRA_VARS ?: 'Non générées'}
+
+                ⚠️ Veuillez vérifier les logs pour plus de détails.
+            """
+            
+            mail to: 'l.kieran95@gmail.com',
+                subject: "[Jenkins] Docker Compose - Échec - ${params.DOCKER_IMAGE_NAME}",
+                body: emailBody
+        }
+    }
+    cleanup {
+        cleanWs()
+    }
+}
 }

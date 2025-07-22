@@ -46,112 +46,87 @@ pipeline {
         }
     }
     
-    post {
-        always {
-            script {
-                // =================================================================
-                // VARIABLES GLOBALES POUR LA MISE À JOUR SYSTÈME
-                // =================================================================
-                
-                env.POST_OPERATION_TYPE = 'SYSTEM UPDATE'
-                env.POST_TARGET_SERVER = params.TARGET_SERVER
-                env.POST_PLAYBOOK_NAME = 'update_system_linux.yml'
-                env.POST_ANSIBLE_INVENTORY = '/tmp/ansibleJenkins/ansible/inventory/hosts.ini'
-                
-                // Configuration email
-                env.POST_EMAIL_RECIPIENT = 'l.kieran95@gmail.com'
-                env.POST_EMAIL_SUBJECT_PREFIX = '[Ansible System Update]'
-                
-                // Timestamp de l'exécution
-                env.POST_BUILD_TIMESTAMP = new Date().format('yyyy-MM-dd HH:mm:ss')
-                
-                // =================================================================
-                // GÉNÉRATION DU RAPPORT
-                // =================================================================
-                
-                echo "Mise à jour système terminée"
-                
-                def report = """
-                === RAPPORT DE MISE À JOUR SYSTÈME ===
-                Serveur cible: ${env.POST_TARGET_SERVER}
-                Playbook: ${env.POST_PLAYBOOK_NAME}
-                Inventaire: ${env.POST_ANSIBLE_INVENTORY}
-                Build: #${env.BUILD_NUMBER}
-                Date: ${env.POST_BUILD_TIMESTAMP}
-                Statut: ${currentBuild.currentResult}
-                Durée: ${currentBuild.durationString}
-                
-                URL du build: ${env.BUILD_URL}
-                Logs console: ${env.BUILD_URL}console
-                ==========================================
-                """
-                
-                writeFile file: "system_update_report.txt", text: report
-                archiveArtifacts artifacts: "system_update_report.txt", allowEmptyArchive: true
-            }
-        }
+post {
+    always {
+        echo "Mise à jour système terminée"
         
-        success {
-            script {
-                echo "Mise à jour système réussie sur '${env.POST_TARGET_SERVER}'"
-                
-                // Description du build
-                currentBuild.description = "Mise à jour système sur ${env.POST_TARGET_SERVER} - Réussie"
-                
-                // Corps de l'email de succès
-                def emailBody = """
+        // Créer un rapport détaillé
+        script {
+            def report = """
+            === RAPPORT DE MISE À JOUR SYSTÈME ===
+            Serveur Cible: ${params.TARGET_SERVER}
+            Playbook: update_system_linux.yml
+            Inventaire: /tmp/ansibleJenkins/ansible/inventory/hosts.ini
+            Build: #${env.BUILD_NUMBER}
+            Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+            Statut: ${currentBuild.currentResult}
+            Durée: ${currentBuild.durationString ?: 'N/A'}
+            ==========================================
+            """
+            writeFile file: 'system_update_report.txt', text: report
+            archiveArtifacts artifacts: 'system_update_report.txt', allowEmptyArchive: true
+        }
+    }
+    success {
+        script {
+            echo "Mise à jour système réussie sur '${params.TARGET_SERVER}'"
+            
+            currentBuild.description = "Mise à jour système → ${params.TARGET_SERVER}"
+            
+            // Créer le corps de l'email en texte avec formatage
+            def emailBody = """
                 🚀 MISE À JOUR SYSTÈME - SUCCÈS
 
-                Serveur cible: ${env.POST_TARGET_SERVER}
-                Playbook exécuté: ${env.POST_PLAYBOOK_NAME}
+                Serveur: ${params.TARGET_SERVER}
+                Playbook: update_system_linux.yml
                 Build: #${env.BUILD_NUMBER}
-                Date: ${env.POST_BUILD_TIMESTAMP}
-                Durée: ${currentBuild.durationString}
+                Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+                Durée: ${currentBuild.durationString ?: 'N/A'}
 
                 📊 Détails du build: ${env.BUILD_URL}
 
+                Configuration utilisée:
+                - Inventaire: /tmp/ansibleJenkins/ansible/inventory/hosts.ini
+                - Type d'opération: Mise à jour système complète
+
                 ✅ La mise à jour système s'est terminée avec succès.
-                
-                Le serveur ${env.POST_TARGET_SERVER} a été mis à jour et est maintenant prêt.
-                """
-                
-                mail to: env.POST_EMAIL_RECIPIENT,
-                    subject: "${env.POST_EMAIL_SUBJECT_PREFIX} ${env.POST_TARGET_SERVER} - Succès",
-                    body: emailBody
-            }
+            """
+            
+            mail to: 'l.kieran95@gmail.com',
+                subject: "[Jenkins] Mise à jour système - ${params.TARGET_SERVER} - Succès",
+                body: emailBody
         }
-        
-        failure {
-            script {
-                echo "Échec de la mise à jour système sur '${env.POST_TARGET_SERVER}'"
-                
-                // Description du build
-                currentBuild.description = "Mise à jour système sur ${env.POST_TARGET_SERVER} - ÉCHEC"
-                
-                // Corps de l'email d'échec
-                def emailBody = """
+    }
+    failure {
+        script {
+            echo "Échec de la mise à jour système sur '${params.TARGET_SERVER}'"
+            
+            currentBuild.description = "Mise à jour système → ÉCHEC"
+            
+            // Créer le corps de l'email d'échec
+            def emailBody = """
                 ❌ MISE À JOUR SYSTÈME - ÉCHEC
 
-                Serveur cible: ${env.POST_TARGET_SERVER}
-                Playbook: ${env.POST_PLAYBOOK_NAME}
+                Serveur: ${params.TARGET_SERVER}
+                Playbook: update_system_linux.yml
                 Build: #${env.BUILD_NUMBER}
-                Date: ${env.POST_BUILD_TIMESTAMP}
-                Durée: ${currentBuild.durationString}
+                Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
 
                 🔍 Logs d'erreur: ${env.BUILD_URL}console
 
-                ⚠️ La mise à jour système a échoué. Veuillez vérifier les logs pour plus de détails.
-                
-                Serveur concerné: ${env.POST_TARGET_SERVER}
-                """
-                
-                mail to: env.POST_EMAIL_RECIPIENT,
-                    subject: "${env.POST_EMAIL_SUBJECT_PREFIX} ${env.POST_TARGET_SERVER} - Échec",
-                    body: emailBody
-            }
-        }
-        
-        cleanup {
-            cleanWs()
+                Configuration utilisée:
+                - Inventaire: /tmp/ansibleJenkins/ansible/inventory/hosts.ini
+                - Type d'opération: Mise à jour système complète
+
+                ⚠️ Veuillez vérifier les logs pour plus de détails.
+            """
+            
+            mail to: 'l.kieran95@gmail.com',
+                subject: "[Jenkins] Mise à jour système - Échec - ${params.TARGET_SERVER}",
+                body: emailBody
         }
     }
+    cleanup {
+        cleanWs()
+    }
+}

@@ -71,18 +71,15 @@ pipeline {
                     echo "Vérification de l'installation Ansible..."
                     sh 'ansible --version'
                     
-                    echo "Vérification de la connectivité vers l'inventaire..."
-                    sh 'ansible all -i /tmp/ansibleJenkins/ansible/inventory/hosts.yml --list-hosts'
-                    
                     // Vérification de la syntaxe des playbooks selon l'OS cible
                     if (params.TARGET_OS == 'linux' || params.TARGET_OS == 'both') {
                         echo "Vérification du playbook Linux..."
-                        sh "ansible-playbook --syntax-check -i /tmp/ansibleJenkins/ansible/inventory/hosts.yml /tmp/ansibleJenkins/ansible/playbooks/ping-test-linux.yml"
+                        sh "ansible-playbook --syntax-check -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini /tmp/ansibleJenkins/ansible/playbook/ping_linux.yml"
                     }
                     
                     if (params.TARGET_OS == 'windows' || params.TARGET_OS == 'both') {
                         echo "Vérification du playbook Windows..."
-                        sh "ansible-playbook --syntax-check -i /tmp/ansibleJenkins/ansible/inventory/hosts.yml /tmp/ansibleJenkins/ansible/playbooks/ping-test-windows.yml"
+                        sh "ansible-playbook --syntax-check -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini /tmp/ansibleJenkins/ansible/playbook/ping_windows.yml"
                     }
                 }
             }
@@ -103,11 +100,10 @@ pipeline {
                     withCredentials([file(credentialsId: 'ssh-key-ansible-user-secret-file', variable: 'SSH_KEY_FILE')]) {
                         sh """
                             ansible-playbook ${verboseFlag} \
-                                -i /tmp/ansibleJenkins/ansible/inventory/hosts.yml \
-                                /tmp/ansibleJenkins/ansible/playbooks/ping-test-linux.yml \
+                                -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \
+                                /tmp/ansibleJenkins/ansible/playbook/ping_linux.yml \
                                 ${limitFlag} \
-                                ${extraVars} \
-                                --tags linux,ping
+                                ${extraVars}
                         """
                     }
                 }
@@ -126,52 +122,15 @@ pipeline {
                     def limitFlag = (params.TARGET_SERVER != 'all') ? "--limit ${params.TARGET_SERVER}" : ''
                     def extraVars = params.GATHER_SYSTEM_INFO ? '-e gather_system_info=true' : '-e gather_system_info=false'
                     
-                    withCredentials([
-                        usernamePassword(credentialsId: 'windows-ansible-credentials', 
-                                       usernameVariable: 'WIN_USER', 
-                                       passwordVariable: 'WIN_PASS')
-                    ]) {
+                     withCredentials([file(credentialsId: 'ssh-key-ansible-user-secret-file', variable: 'SSH_KEY_FILE')])
+                    {
                         sh """
                             ansible-playbook ${verboseFlag} \
-                                -i /tmp/ansibleJenkins/ansible/inventory/hosts.yml \
-                                /tmp/ansibleJenkins/ansible/playbooks/ping-test-windows.yml \
+                                -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \
+                                /tmp/ansibleJenkins/ansible/playbook/ping_windows.yml \
                                 ${limitFlag} \
-                                ${extraVars} \
-                                --tags windows,ping \
-                                -e ansible_user=\$WIN_USER \
-                                -e ansible_password=\$WIN_PASS
+                                ${extraVars} 
                         """
-                    }
-                }
-            }
-        }
-        
-        stage('Test de connectivité direct') {
-            steps {
-                script {
-                    echo "=== TEST DE CONNECTIVITÉ DIRECT ==="
-                    
-                    try {
-                        if (params.TARGET_OS == 'linux' || params.TARGET_OS == 'both') {
-                            echo "Test ping direct Linux..."
-                            def limitFlag = (params.TARGET_SERVER != 'all') ? "--limit ${params.TARGET_SERVER}" : ''
-                            sh "ansible linux -i /tmp/ansibleJenkins/ansible/inventory/hosts.yml -m ping ${limitFlag}"
-                        }
-                        
-                        if (params.TARGET_OS == 'windows' || params.TARGET_OS == 'both') {
-                            echo "Test ping direct Windows..."
-                            def limitFlag = (params.TARGET_SERVER != 'all') ? "--limit ${params.TARGET_SERVER}" : ''
-                            withCredentials([
-                                usernamePassword(credentialsId: 'windows-ansible-credentials', 
-                                               usernameVariable: 'WIN_USER', 
-                                               passwordVariable: 'WIN_PASS')
-                            ]) {
-                                sh "ansible windows -i /tmp/ansibleJenkins/ansible/inventory/hosts.yml -m win_ping ${limitFlag} -e ansible_user=\$WIN_USER -e ansible_password=\$WIN_PASS"
-                            }
-                        }
-                    } catch (Exception e) {
-                        echo "Certains serveurs ne sont pas accessibles via le test direct: ${e.getMessage()}"
-                        currentBuild.result = 'UNSTABLE'
                     }
                 }
             }
