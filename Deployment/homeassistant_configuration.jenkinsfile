@@ -160,6 +160,7 @@ pipeline {
                     echo "🔧 Préparation des variables Ansible pour Home Assistant..."
                     
                     // Variables Ansible principales
+                    
                     def ansibleVars = []
                     ansibleVars << "HOST='${params.TARGET_SERVER}'"
                     ansibleVars << "inventory_hostname='${params.HA_INSTANCE_IP}'"
@@ -200,7 +201,7 @@ pipeline {
                             echo "Exécution du playbook Home Assistant..."
                             echo "Variables utilisées: ${ANSIBLE_EXTRA_VARS}"
                             echo "Flag de verbosité: ${ANSIBLE_VERBOSE_FLAG}"
-                            echo "Token HA: ${HA_TOKEN:0:20}..."
+                            echo "Token HA: ${HA_TOKEN}"
                             
                             # Commande Ansible pour déploiement Home Assistant
                             ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \

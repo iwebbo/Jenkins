@@ -1,0 +1,296 @@
+pipeline {
+    agent any
+    
+    environment {
+        ANSIBLE_HOST_KEY_CHECKING = 'False'
+        ANSIBLE_FORKS = '2'
+        ANSIBLE_CONFIG = '/tmp/ansibleJenkins/ansible/ansible.cfg'
+    }
+    
+    parameters {
+        choice(
+            name: 'TARGET_SERVER',
+            choices: [
+                'ServerVM1', 
+                'RaspberryPi2',
+                'ReverseProxy',
+                'Linux'
+            ],
+            description: 'Serveur cible pour l\'installation du package'
+        )
+        
+        string(
+            name: 'PACKAGE_NAME',
+            defaultValue: '',
+            description: '📦 Nom du package à installer (ex: nginx, docker.io, python3)'
+        )
+        
+        string(
+            name: 'PACKAGE_VERSION',
+            defaultValue: '',
+            description: '🔢 Version spécifique du package (optionnel, laisser vide pour la dernière version)'
+        )
+        
+        choice(
+            name: 'PACKAGE_STATE',
+            choices: [
+                'present',
+                'latest', 
+                'absent'
+            ],
+            description: '''📋 Action à effectuer:
+            
+            present = Installer si absent
+            latest = Installer/Mettre à jour vers la dernière version
+            absent = Désinstaller le package'''
+        )
+        
+        choice(
+            name: 'ANSIBLE_VERBOSITY',
+            choices: [
+                '0',
+                '1',
+                '2',
+                '3',
+                '4'
+            ],
+            description: '''🔧 Niveau de verbosité Ansible:
+            
+            0 = Normal (défaut)
+            1 = Verbose (-v)
+            2 = Plus verbose (-vv)
+            3 = Debug (-vvv)
+            4 = Debug complet (-vvvv)'''
+        )
+    }
+    
+    stages {
+        stage('Validation des paramètres') {
+            steps {
+                script {
+                    // Définir le playbook à utiliser
+                    env.SELECTED_PLAYBOOK = 'linux_package_deployment.yml'
+                    echo "Playbook sélectionné: ${env.SELECTED_PLAYBOOK}"
+                    
+                    echo "🔍 Validation des paramètres de gestion de packages..."
+                    echo "Serveur cible: ${params.TARGET_SERVER}"
+                    echo "Package: ${params.PACKAGE_NAME}"
+                    echo "Version: ${params.PACKAGE_VERSION ?: 'latest'}"
+                    echo "Action: ${params.PACKAGE_STATE}"
+                    echo "Verbosité Ansible: ${params.ANSIBLE_VERBOSITY}"
+                    
+                    // Validation du nom de package
+                    if (!params.PACKAGE_NAME || params.PACKAGE_NAME.trim() == '') {
+                        error("❌ Le nom du package est obligatoire !")
+                    }
+                    
+                    // Déterminer le flag de verbosité
+                    def verbosityFlag = ''
+                    if (params.ANSIBLE_VERBOSITY != '0') {
+                        verbosityFlag = '-' + 'v' * params.ANSIBLE_VERBOSITY.toInteger()
+                    }
+                    env.ANSIBLE_VERBOSE_FLAG = verbosityFlag
+                    echo "Flag de verbosité: '${env.ANSIBLE_VERBOSE_FLAG}'"
+                    
+                    // Définir la description du build
+                    def action = params.PACKAGE_STATE == 'absent' ? 'Désinstallation' : 'Installation'
+                    currentBuild.description = "${action} de ${params.PACKAGE_NAME} → ${params.TARGET_SERVER}"
+                }
+            }
+        }
+        
+        stage('Vérification Ansible') {
+            steps {
+                script {
+                    echo "🔧 Vérification de l'environnement Ansible..."
+                    
+                    // Vérifier qu'Ansible est installé
+                    sh 'ansible --version'
+                    
+                    // Vérifier la syntaxe du playbook
+                    sh """
+                        ansible-playbook --syntax-check \
+                            -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \
+                            /tmp/ansibleJenkins/ansible/playbook/${env.SELECTED_PLAYBOOK}
+                    """
+                    
+                    // Vérifier la connectivité avec le serveur cible
+                    echo "🔗 Test de connectivité avec ${params.TARGET_SERVER}..."
+                    sh """
+                        ansible ${params.TARGET_SERVER} \
+                            -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \
+                            -m ping
+                    """
+                }
+            }
+        }
+        
+        stage('Exécution du Playbook') {
+            steps {
+                script {
+                    withCredentials([file(credentialsId: 'ssh-key-ansible-user-secret-file', variable: 'SSH_KEY_FILE')]) {
+                        echo "🚀 Démarrage de la gestion du package..."
+                        echo "Serveur: ${params.TARGET_SERVER}"
+                        echo "Package: ${params.PACKAGE_NAME}"
+                        echo "Version: ${params.PACKAGE_VERSION ?: 'latest'}"
+                        echo "Action: ${params.PACKAGE_STATE}"
+                        echo "Verbosité: ${params.ANSIBLE_VERBOSITY} ${env.ANSIBLE_VERBOSE_FLAG}"
+                        
+                        // Construire les variables extra
+                        def extraVars = [
+                            "HOST=${params.TARGET_SERVER}",
+                            "package_name=${params.PACKAGE_NAME}",
+                            "package_state=${params.PACKAGE_STATE}"
+                        ]
+                        
+                        // Ajouter la version si spécifiée
+                        if (params.PACKAGE_VERSION && params.PACKAGE_VERSION.trim() != '') {
+                            extraVars.add("package_version=${params.PACKAGE_VERSION}")
+                        }
+                        
+                        def extraVarsString = extraVars.join(' -e ')
+                        
+                        sh """
+                            ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \
+                                /tmp/ansibleJenkins/ansible/playbook/${env.SELECTED_PLAYBOOK} \
+                                -e ${extraVarsString} \
+                                ${env.ANSIBLE_VERBOSE_FLAG}
+                        """
+                    }
+                }
+            }
+        }
+        
+        stage('Vérification post-installation') {
+            when {
+                expression { params.PACKAGE_STATE != 'absent' }
+            }
+            steps {
+                script {
+                    echo "✅ Vérification de l'installation du package..."
+                    
+                    withCredentials([file(credentialsId: 'ssh-key-ansible-user-secret-file', variable: 'SSH_KEY_FILE')]) {
+                        sh """
+                            ansible ${params.TARGET_SERVER} \
+                                -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \
+                                -m shell \
+                                -a "which ${params.PACKAGE_NAME} || echo 'Package ${params.PACKAGE_NAME} command not found in PATH'"
+                        """
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            script {
+                def action = params.PACKAGE_STATE == 'absent' ? 'désinstallation' : 'installation'
+                echo "Gestion de package terminée (${action})"
+                
+                // Créer un rapport détaillé
+                def report = """
+                === RAPPORT DE GESTION DE PACKAGE ===
+                Serveur Cible: ${params.TARGET_SERVER}
+                Package: ${params.PACKAGE_NAME}
+                Version: ${params.PACKAGE_VERSION ?: 'latest'}
+                Action: ${params.PACKAGE_STATE}
+                Verbosité Ansible: ${params.ANSIBLE_VERBOSITY}
+                Playbook: ${env.SELECTED_PLAYBOOK}
+                Rôle: linux_package_manager
+                Inventaire: /tmp/ansibleJenkins/ansible/inventory/hosts.ini
+                Build: #${env.BUILD_NUMBER}
+                Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+                Statut: ${currentBuild.currentResult}
+                Durée: ${currentBuild.durationString ?: 'N/A'}
+                =========================================
+                """
+                writeFile file: 'package_management_report.txt', text: report
+                archiveArtifacts artifacts: 'package_management_report.txt', allowEmptyArchive: true
+            }
+        }
+        
+        success {
+            script {
+                def action = params.PACKAGE_STATE == 'absent' ? 'désinstallation' : 'installation'
+                def actionEmoji = params.PACKAGE_STATE == 'absent' ? '🗑️' : '📦'
+                
+                echo "${action.capitalize()} du package '${params.PACKAGE_NAME}' réussie sur '${params.TARGET_SERVER}'"
+                
+                // Créer le corps de l'email de succès
+                def emailBody = """
+                    ${actionEmoji} GESTION DE PACKAGE - SUCCÈS
+
+                    Serveur: ${params.TARGET_SERVER}
+                    Package: ${params.PACKAGE_NAME}
+                    Version: ${params.PACKAGE_VERSION ?: 'latest'}
+                    Action: ${params.PACKAGE_STATE}
+                    Verbosité Ansible: ${params.ANSIBLE_VERBOSITY}
+                    Rôle: linux_package_manager
+                    Build: #${env.BUILD_NUMBER}
+                    Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+                    Durée: ${currentBuild.durationString ?: 'N/A'}
+
+                    📊 Détails du build: ${env.BUILD_URL}
+
+                    Configuration utilisée:
+                    - Inventaire: /tmp/ansibleJenkins/ansible/inventory/hosts.ini
+                    - Playbook: linux_package_deployment.yml
+                    - Type d'opération: ${action.capitalize()} de package
+                    - Flag de verbosité: ${env.ANSIBLE_VERBOSE_FLAG ?: 'Aucun'}
+
+                    ✅ La ${action} du package s'est terminée avec succès.
+                """
+                
+                mail to: 'l.kieran95@gmail.com',
+                    subject: "[Jenkins] ${action.capitalize()} package - ${params.PACKAGE_NAME} sur ${params.TARGET_SERVER} - Succès",
+                    body: emailBody
+            }
+        }
+        
+        failure {
+            script {
+                def action = params.PACKAGE_STATE == 'absent' ? 'désinstallation' : 'installation'
+                echo "Échec de la ${action} du package '${params.PACKAGE_NAME}' sur '${params.TARGET_SERVER}'"
+                
+                // Créer le corps de l'email d'échec
+                def emailBody = """
+                    ❌ GESTION DE PACKAGE - ÉCHEC
+
+                    Serveur: ${params.TARGET_SERVER}
+                    Package: ${params.PACKAGE_NAME}
+                    Version: ${params.PACKAGE_VERSION ?: 'latest'}
+                    Action: ${params.PACKAGE_STATE}
+                    Verbosité Ansible: ${params.ANSIBLE_VERBOSITY}
+                    Rôle: linux_package_manager
+                    Build: #${env.BUILD_NUMBER}
+                    Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+
+                    🔍 Logs d'erreur: ${env.BUILD_URL}console
+
+                    Configuration utilisée:
+                    - Inventaire: /tmp/ansibleJenkins/ansible/inventory/hosts.ini
+                    - Playbook: linux_package_deployment.yml
+                    - Type d'opération: ${action.capitalize()} de package
+                    - Flag de verbosité: ${env.ANSIBLE_VERBOSE_FLAG ?: 'Aucun'}
+
+                    ⚠️ Veuillez vérifier les logs pour plus de détails.
+                    
+                    💡 Causes possibles:
+                    - Package inexistant dans les dépôts
+                    - Version spécifiée introuvable
+                    - Problème de connectivité réseau
+                    - Permissions insuffisantes
+                """
+                
+                mail to: 'l.kieran95@gmail.com',
+                    subject: "[Jenkins] Échec ${action} package - ${params.PACKAGE_NAME} sur ${params.TARGET_SERVER}",
+                    body: emailBody
+            }
+        }
+        
+        cleanup {
+            cleanWs()
+        }
+    }
+}

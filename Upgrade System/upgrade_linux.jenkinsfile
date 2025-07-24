@@ -1,6 +1,11 @@
 pipeline {
     agent any
     
+    // Trigger automatique tous les jours à 4h du matin
+    triggers {
+        cron('0 4 * * *')
+    }
+    
     environment {
         ANSIBLE_HOST_KEY_CHECKING = 'False'
         ANSIBLE_FORKS = '2'
@@ -41,14 +46,27 @@ pipeline {
         stage('Validation des paramètres') {
             steps {
                 script {
+                    // Gestion automatique pour les builds programmés
+                    if (env.BUILD_CAUSE == 'TIMERTRIGGER') {
+                        echo "🕐 Exécution automatique programmée à 4h du matin"
+                        // Valeurs par défaut pour l'exécution automatique
+                        env.TARGET_SERVER = 'Linux'
+                        env.ANSIBLE_VERBOSITY = '1'
+                    } else {
+                        echo "🖱️ Exécution manuelle avec paramètres utilisateur"
+                        env.TARGET_SERVER = params.TARGET_SERVER
+                        env.ANSIBLE_VERBOSITY = params.ANSIBLE_VERBOSITY
+                    }
+                    
                     echo "🔍 Validation des paramètres de mise à jour système..."
-                    echo "Serveur cible: ${params.TARGET_SERVER}"
-                    echo "Verbosité Ansible: ${params.ANSIBLE_VERBOSITY}"
+                    echo "Serveur cible: ${env.TARGET_SERVER}"
+                    echo "Verbosité Ansible: ${env.ANSIBLE_VERBOSITY}"
+                    echo "Type de déclenchement: ${env.BUILD_CAUSE ?: 'Manuel'}"
                     
                     // Déterminer le flag de verbosité
                     def verbosityFlag = ''
-                    if (params.ANSIBLE_VERBOSITY != '0') {
-                        verbosityFlag = '-' + 'v' * params.ANSIBLE_VERBOSITY.toInteger()
+                    if (env.ANSIBLE_VERBOSITY != '0') {
+                        verbosityFlag = '-' + 'v' * env.ANSIBLE_VERBOSITY.toInteger()
                     }
                     env.ANSIBLE_VERBOSE_FLAG = verbosityFlag
                     echo "Flag de verbosité: '${env.ANSIBLE_VERBOSE_FLAG}'"
@@ -63,7 +81,7 @@ pipeline {
                     sh 'ansible --version'
                     
                     // Vérifier la syntaxe du playbook
-                    // sh "ansible-playbook --syntax-check -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini /tmp/ansibleJenkins/ansible/playbook/update_system_linux.yml"
+                    sh "ansible-playbook --syntax-check -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini -e HOST=${TARGET_SERVER} /tmp/ansibleJenkins/ansible/playbook/update_system_linux.yml"
                 }
             }
         }
@@ -73,8 +91,8 @@ pipeline {
                 script {
                     withCredentials([file(credentialsId: 'ssh-key-ansible-user-secret-file', variable: 'SSH_KEY_FILE')]) {
                         echo "🚀 Démarrage de la mise à jour système..."
-                        echo "Serveur: ${params.TARGET_SERVER}"
-                        echo "Verbosité: ${params.ANSIBLE_VERBOSITY} ${env.ANSIBLE_VERBOSE_FLAG}"
+                        echo "Serveur: ${env.TARGET_SERVER}"
+                        echo "Verbosité: ${env.ANSIBLE_VERBOSITY} ${env.ANSIBLE_VERBOSE_FLAG}"
                         
                         sh '''
                             ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \
@@ -94,10 +112,12 @@ pipeline {
             
             // Créer un rapport détaillé
             script {
+                def triggerType = env.BUILD_CAUSE == 'TIMERTRIGGER' ? 'Automatique (Cron 4h)' : 'Manuel'
                 def report = """
                 === RAPPORT DE MISE À JOUR SYSTÈME ===
-                Serveur Cible: ${params.TARGET_SERVER}
-                Verbosité Ansible: ${params.ANSIBLE_VERBOSITY}
+                Serveur Cible: ${env.TARGET_SERVER}
+                Verbosité Ansible: ${env.ANSIBLE_VERBOSITY}
+                Type de déclenchement: ${triggerType}
                 Playbook: update_system_linux.yml
                 Inventaire: /tmp/ansibleJenkins/ansible/inventory/hosts.ini
                 Build: #${env.BUILD_NUMBER}
@@ -112,16 +132,18 @@ pipeline {
         }
         success {
             script {
-                echo "Mise à jour système réussie sur '${params.TARGET_SERVER}'"
+                def triggerType = env.BUILD_CAUSE == 'TIMERTRIGGER' ? 'Automatique (Cron 4h)' : 'Manuel'
+                echo "Mise à jour système réussie sur '${env.TARGET_SERVER}'"
                 
-                currentBuild.description = "Mise à jour système → ${params.TARGET_SERVER}"
+                currentBuild.description = "Mise à jour système → ${env.TARGET_SERVER} (${triggerType})"
                 
                 // Créer le corps de l'email en texte avec formatage
                 def emailBody = """
                     🚀 MISE À JOUR SYSTÈME - SUCCÈS
 
-                    Serveur: ${params.TARGET_SERVER}
-                    Verbosité Ansible: ${params.ANSIBLE_VERBOSITY}
+                    Serveur: ${env.TARGET_SERVER}
+                    Verbosité Ansible: ${env.ANSIBLE_VERBOSITY}
+                    Type de déclenchement: ${triggerType}
                     Playbook: update_system_linux.yml
                     Build: #${env.BUILD_NUMBER}
                     Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
@@ -133,27 +155,33 @@ pipeline {
                     - Inventaire: /tmp/ansibleJenkins/ansible/inventory/hosts.ini
                     - Type d'opération: Mise à jour système complète
                     - Flag de verbosité: ${env.ANSIBLE_VERBOSE_FLAG ?: 'Aucun'}
+                    - Déclenchement: ${triggerType}
 
                     ✅ La mise à jour système s'est terminée avec succès.
                 """
                 
+                // Sujet différent selon le type de déclenchement
+                def subjectPrefix = env.BUILD_CAUSE == 'TIMERTRIGGER' ? '[Auto-4h]' : '[Manuel]'
+                
                 mail to: 'l.kieran95@gmail.com',
-                    subject: "[Jenkins] Mise à jour système - ${params.TARGET_SERVER} - Succès",
+                    subject: "${subjectPrefix} [Jenkins] Mise à jour système - ${env.TARGET_SERVER} - Succès",
                     body: emailBody
             }
         }
         failure {
             script {
-                echo "Échec de la mise à jour système sur '${params.TARGET_SERVER}'"
+                def triggerType = env.BUILD_CAUSE == 'TIMERTRIGGER' ? 'Automatique (Cron 4h)' : 'Manuel'
+                echo "Échec de la mise à jour système sur '${env.TARGET_SERVER}'"
                 
-                currentBuild.description = "Mise à jour système → ÉCHEC"
+                currentBuild.description = "Mise à jour système → ÉCHEC (${triggerType})"
                 
                 // Créer le corps de l'email d'échec
                 def emailBody = """
                     ❌ MISE À JOUR SYSTÈME - ÉCHEC
 
-                    Serveur: ${params.TARGET_SERVER}
-                    Verbosité Ansible: ${params.ANSIBLE_VERBOSITY}
+                    Serveur: ${env.TARGET_SERVER}
+                    Verbosité Ansible: ${env.ANSIBLE_VERBOSITY}
+                    Type de déclenchement: ${triggerType}
                     Playbook: update_system_linux.yml
                     Build: #${env.BUILD_NUMBER}
                     Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
@@ -164,12 +192,18 @@ pipeline {
                     - Inventaire: /tmp/ansibleJenkins/ansible/inventory/hosts.ini
                     - Type d'opération: Mise à jour système complète
                     - Flag de verbosité: ${env.ANSIBLE_VERBOSE_FLAG ?: 'Aucun'}
+                    - Déclenchement: ${triggerType}
 
                     ⚠️ Veuillez vérifier les logs pour plus de détails.
+                    
+                    ${env.BUILD_CAUSE == 'TIMERTRIGGER' ? '🕐 Build automatique de 4h du matin' : ''}
                 """
                 
+                // Sujet différent selon le type de déclenchement
+                def subjectPrefix = env.BUILD_CAUSE == 'TIMERTRIGGER' ? '[Auto-4h]' : '[Manuel]'
+                
                 mail to: 'l.kieran95@gmail.com',
-                    subject: "[Jenkins] Mise à jour système - Échec - ${params.TARGET_SERVER}",
+                    subject: "${subjectPrefix} [Jenkins] Mise à jour système - Échec - ${env.TARGET_SERVER}",
                     body: emailBody
             }
         }
