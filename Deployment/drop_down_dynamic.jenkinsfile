@@ -1,0 +1,64 @@
+// Fonction pour déterminer les environnements disponibles
+def getEnvironments(String ecosystem, def environments = null) {
+    if (environments == null) {
+        // Récupération de l'URL Jenkins pour déterminer l'environnement
+        def jenkinsUrl = env.JENKINS_URL.toLowerCase()
+        
+        if (jenkinsUrl.contains(ecosystem.toLowerCase() + "-dev-")) {
+            return ["DEV", "UAT"]
+        }
+        else if (jenkinsUrl.contains(ecosystem.toLowerCase() + "-stg-")) {
+            return ["STG", "PREPROD"]
+        }
+        else if (jenkinsUrl.contains(ecosystem.toLowerCase() + "-prod-")) {
+            return ["PROD"]
+        }
+        else {
+            // Valeur par défaut si aucun pattern ne correspond
+            return ["DEV", "UAT", "STG", "PROD"]
+        }
+    }
+    return environments
+}
+
+pipeline {
+    agent any
+    
+    parameters {
+        string(
+            name: 'ECOSYSTEM',
+            defaultValue: 'myapp',
+            description: 'Nom de l\'écosystème'
+        )
+        choice(
+            name: 'ENVIRONMENT',
+            choices: getEnvironments(params.ECOSYSTEM ?: 'myapp'),
+            description: 'Environnement cible'
+        )
+    }
+    
+    stages {
+        stage('Display Parameters') {
+            steps {
+                script {
+                    echo "Écosystème: ${params.ECOSYSTEM}"
+                    echo "Environnement sélectionné: ${params.ENVIRONMENT}"
+                    echo "URL Jenkins: ${env.JENKINS_URL}"
+                    
+                    // Affichage des environnements disponibles
+                    def availableEnvs = getEnvironments(params.ECOSYSTEM)
+                    echo "Environnements disponibles: ${availableEnvs.join(', ')}"
+                }
+            }
+        }
+        
+        stage('Deploy') {
+            steps {
+                script {
+                    echo "Déploiement sur ${params.ENVIRONMENT} pour l'écosystème ${params.ECOSYSTEM}"
+                    // Ton code de déploiement ici
+                }
+            }
+        }
+    }
+}

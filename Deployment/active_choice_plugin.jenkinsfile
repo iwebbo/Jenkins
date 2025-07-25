@@ -1,0 +1,119 @@
+// Version avec Active Choices Plugin pour plus de dynamisme
+@Library('your-shared-library') _
+
+// Fonction utilitaire (peut être dans une shared library)
+def getEnvironmentsByEcosystem(String ecosystem) {
+    def jenkinsUrl = "${env.JENKINS_URL}".toLowerCase()
+    
+    switch(true) {
+        case jenkinsUrl.contains("${ecosystem.toLowerCase()}-dev-"):
+            return ["DEV", "UAT"]
+        case jenkinsUrl.contains("${ecosystem.toLowerCase()}-stg-"):
+            return ["STG", "PREPROD"] 
+        case jenkinsUrl.contains("${ecosystem.toLowerCase()}-prod-"):
+            return ["PROD"]
+        default:
+            return ["DEV", "UAT", "STG", "PROD"]
+    }
+}
+
+pipeline {
+    agent any
+    
+    parameters {
+        // Paramètre pour l'écosystème
+        string(
+            name: 'ECOSYSTEM',
+            defaultValue: 'myapp',
+            description: 'Nom de l\'écosystème'
+        )
+        
+        // Si tu utilises Active Choices Plugin (plus dynamique)
+        /* 
+        activeChoice(
+            choiceType: 'PT_SINGLE_SELECT',
+            description: 'Sélectionner l\'environnement',
+            filterLength: 1,
+            filterable: false,
+            name: 'ENVIRONMENT',
+            script: '''
+                def ecosystem = ECOSYSTEM ?: 'myapp'
+                def jenkinsUrl = "${JENKINS_URL}".toLowerCase()
+                
+                if (jenkinsUrl.contains("${ecosystem.toLowerCase()}-dev-")) {
+                    return ["DEV", "UAT"]
+                } else if (jenkinsUrl.contains("${ecosystem.toLowerCase()}-stg-")) {
+                    return ["STG", "PREPROD"]
+                } else if (jenkinsUrl.contains("${ecosystem.toLowerCase()}-prod-")) {
+                    return ["PROD"]
+                } else {
+                    return ["DEV", "UAT", "STG", "PROD"]
+                }
+            '''
+        )
+        */
+        
+        // Version standard choice (moins dynamique mais plus simple)
+        choice(
+            name: 'ENVIRONMENT',
+            choices: getEnvironmentsByEcosystem(params.ECOSYSTEM ?: 'myapp'),
+            description: 'Environnement de déploiement'
+        )
+    }
+    
+    stages {
+        stage('Validation') {
+            steps {
+                script {
+                    echo "=== PARAMÈTRES DE BUILD ==="
+                    echo "Écosystème: ${params.ECOSYSTEM}"
+                    echo "Environnement: ${params.ENVIRONMENT}"
+                    echo "Jenkins URL: ${env.JENKINS_URL}"
+                    
+                    // Validation supplémentaire
+                    def validEnvironments = getEnvironmentsByEcosystem(params.ECOSYSTEM)
+                    if (!validEnvironments.contains(params.ENVIRONMENT)) {
+                        error("Environnement ${params.ENVIRONMENT} non valide pour l'écosystème ${params.ECOSYSTEM}")
+                    }
+                }
+            }
+        }
+        
+        stage('Deploy') {
+            steps {
+                script {
+                    echo "🚀 Déploiement en cours..."
+                    echo "Cible: ${params.ENVIRONMENT}"
+                    echo "Écosystème: ${params.ECOSYSTEM}"
+                    
+                    // Logique de déploiement spécifique par environnement
+                    switch(params.ENVIRONMENT) {
+                        case 'DEV':
+                            echo "Déploiement DEV - Tests automatiques activés"
+                            break
+                        case 'UAT':
+                            echo "Déploiement UAT - Tests d'acceptance"
+                            break
+                        case 'STG':
+                            echo "Déploiement STAGING - Tests de performance"
+                            break
+                        case 'PROD':
+                            echo "Déploiement PRODUCTION - Mode sécurisé"
+                            break
+                        default:
+                            echo "Environnement non reconnu: ${params.ENVIRONMENT}"
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo "✅ Déploiement réussi sur ${params.ENVIRONMENT}"
+        }
+        failure {
+            echo "❌ Échec du déploiement sur ${params.ENVIRONMENT}"
+        }
+    }
+}
