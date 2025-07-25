@@ -1,6 +1,7 @@
-def ECOSYSTEM = "APPNAME" 
-def ecosystemLower = ECOSYSTEM.toLowerCase() 
 def getEnvironments() {
+    def ECOSYSTEM = "APPNAME" 
+    def ecosystemLower = ECOSYSTEM.toLowerCase() 
+    
     def jenkinsUrl = env.JENKINS_URL ?: ""
     def jobUrl = env.JOB_URL ?: ""
     
@@ -33,6 +34,9 @@ pipeline {
         stage('Display Parameters') {
             steps {
                 script {
+                    def ECOSYSTEM = "APPNAME"  
+                    def ecosystemLower = ECOSYSTEM.toLowerCase()
+                    
                     echo "=== INFORMATIONS DE BUILD ==="
                     echo "Écosystème (fixe): ${ECOSYSTEM}"
                     echo "Écosystème (URLs): ${ecosystemLower}"
@@ -49,7 +53,10 @@ pipeline {
         stage('Deploy') {
             steps {
                 script {
-                    echo "Déploiement en cours..."
+                    def ECOSYSTEM = "APPNAME"  // Même valeur (MAJUSCULES)
+                    def ecosystemLower = ECOSYSTEM.toLowerCase()
+                    
+                    echo "🚀 Déploiement en cours..."
                     echo "Application: ${ECOSYSTEM}"
                     echo "Environnement cible: ${params.ENVIRONMENT}"
                     
@@ -78,6 +85,7 @@ pipeline {
     post {
         always {
             script {
+                def ECOSYSTEM = "APPNAME"
                 echo "Fin du déploiement pour ${ECOSYSTEM} sur ${params.ENVIRONMENT}"
             }
         }
