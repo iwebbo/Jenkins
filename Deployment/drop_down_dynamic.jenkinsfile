@@ -1,39 +1,32 @@
-// Fonction pour déterminer les environnements disponibles
-def getEnvironments(String ecosystem, def environments = null) {
-    if (environments == null) {
-        // Récupération de l'URL Jenkins pour déterminer l'environnement
-        def jenkinsUrl = env.JENKINS_URL.toLowerCase()
-        
-        if (jenkinsUrl.contains(ecosystem.toLowerCase() + "-dev-")) {
-            return ["DEV", "UAT"]
-        }
-        else if (jenkinsUrl.contains(ecosystem.toLowerCase() + "-stg-")) {
-            return ["STG", "PREPROD"]
-        }
-        else if (jenkinsUrl.contains(ecosystem.toLowerCase() + "-prod-")) {
-            return ["PROD"]
-        }
-        else {
-            // Valeur par défaut si aucun pattern ne correspond
-            return ["DEV", "UAT", "STG", "PROD"]
-        }
+def getEnvironments() {
+    def ECOSYSTEM = "APPNAME" 
+    def ecosystemLower = ECOSYSTEM.toLowerCase() 
+    
+    def jenkinsUrl = env.JENKINS_URL ?: ""
+    def jobUrl = env.JOB_URL ?: ""
+    
+    echo "DEBUG - Jenkins URL: ${jenkinsUrl}"
+    echo "DEBUG - Job URL: ${jobUrl}"
+    echo "DEBUG - ECOSYSTEM: ${ECOSYSTEM} (lower: ${ecosystemLower})"
+    
+    if (jobUrl.contains("${ecosystemLower}-dev-${ecosystemLower}")) {
+        echo "Environnement détecté: DEV"
+        return ["DEV"]
     }
-    return environments
+    if (jobUrl.contains("${ecosystemLower}-aps-${ecosystemLower}")) {
+        echo "Environnement détecté: STG/PRD"
+        return ["STG", "PRD"]
+    }
 }
 
 pipeline {
     agent any
     
     parameters {
-        string(
-            name: 'ECOSYSTEM',
-            defaultValue: 'myapp',
-            description: 'Nom de l\'écosystème'
-        )
         choice(
             name: 'ENVIRONMENT',
-            choices: getEnvironments(params.ECOSYSTEM ?: 'myapp'),
-            description: 'Environnement cible'
+            choices: getEnvironments(),
+            description: 'Environnement de déploiement'
         )
     }
     
@@ -41,12 +34,17 @@ pipeline {
         stage('Display Parameters') {
             steps {
                 script {
-                    echo "Écosystème: ${params.ECOSYSTEM}"
-                    echo "Environnement sélectionné: ${params.ENVIRONMENT}"
-                    echo "URL Jenkins: ${env.JENKINS_URL}"
+                    def ECOSYSTEM = "APPNAME"  
+                    def ecosystemLower = ECOSYSTEM.toLowerCase()
                     
-                    // Affichage des environnements disponibles
-                    def availableEnvs = getEnvironments(params.ECOSYSTEM)
+                    echo "=== INFORMATIONS DE BUILD ==="
+                    echo "Écosystème (fixe): ${ECOSYSTEM}"
+                    echo "Écosystème (URLs): ${ecosystemLower}"
+                    echo "Environnement sélectionné: ${params.ENVIRONMENT}"
+                    echo "Jenkins URL: ${env.JENKINS_URL}"
+                    echo "Job URL: ${env.JOB_URL}"
+                    
+                    def availableEnvs = getEnvironments()
                     echo "Environnements disponibles: ${availableEnvs.join(', ')}"
                 }
             }
@@ -55,9 +53,40 @@ pipeline {
         stage('Deploy') {
             steps {
                 script {
-                    echo "Déploiement sur ${params.ENVIRONMENT} pour l'écosystème ${params.ECOSYSTEM}"
-                    // Ton code de déploiement ici
+                    def ECOSYSTEM = "APPNAME"  // Même valeur (MAJUSCULES)
+                    def ecosystemLower = ECOSYSTEM.toLowerCase()
+                    
+                    echo "🚀 Déploiement en cours..."
+                    echo "Application: ${ECOSYSTEM}"
+                    echo "Environnement cible: ${params.ENVIRONMENT}"
+                    
+                    // Logique spécifique par environnement
+                    switch(params.ENVIRONMENT) {
+                        case 'DEV':
+                            echo "Déploiement sur DEV - Tests automatiques"
+                            echo "URL pattern: jenkins.cib.echonet/${ecosystemLower}-dev-${ecosystemLower}/job/DEV/"
+                            break
+                        case 'STG':
+                            echo "Déploiement sur STG - Tests d'intégration"
+                            echo "URL pattern: jenkins.cib.echonet/${ecosystemLower}-aps-${ecosystemLower}/job/STG/"
+                            break
+                        case 'PRD':
+                            echo "Déploiement sur PRODUCTION - Mode sécurisé"
+                            echo "URL pattern: jenkins.cib.echonet/${ecosystemLower}-aps-${ecosystemLower}/job/PRD/"
+                            break
+                        default:
+                            echo "Environnement non reconnu: ${params.ENVIRONMENT}"
+                    }
                 }
+            }
+        }
+    }
+    
+    post {
+        always {
+            script {
+                def ECOSYSTEM = "APPNAME"
+                echo "Fin du déploiement pour ${ECOSYSTEM} sur ${params.ENVIRONMENT}"
             }
         }
     }
