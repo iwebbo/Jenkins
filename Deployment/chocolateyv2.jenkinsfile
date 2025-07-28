@@ -174,7 +174,7 @@ pipeline {
         stage('Chocolatey Package Manager Execution') {
             steps {
                 script {
-                    withCredentials([file(credentialsId: 'ssh-key-ansible-user-secret-file', variable: 'SSH_PRIVATE_KEY_FILE')]) {
+                    withCredentials([usernamePassword(credentialsId: 'credentials-id-windows-user-password', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
                         // Conditional execution based on package state
                         if (params.PACKAGE_STATE == 'present' || params.PACKAGE_STATE == 'latest') {
                             echo "🚀 Starting Chocolatey package INSTALLATION..."
@@ -184,13 +184,13 @@ pipeline {
                             echo "Playbook: ${env.SELECTED_PLAYBOOK}"
                             
                             sh '''
-                                chmod 600 $SSH_PRIVATE_KEY_FILE
-                                
                                 echo "Executing INSTALLATION playbook..."
                                 
                                 # Execute Ansible playbook for installation
                                 ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \
                                     /tmp/ansibleJenkins/ansible/playbook/${SELECTED_PLAYBOOK} \
+                                    -e ansible_user="${USERNAME}" \
+                                    -e ansible_password="${PASSWORD}" \
                                     -e HOST=${TARGET_SERVER} \
                                     -e "${ANSIBLE_EXTRA_VARS}"
                             '''
@@ -202,13 +202,13 @@ pipeline {
                             echo "Playbook: ${env.SELECTED_PLAYBOOK}"
                             
                             sh '''
-                                chmod 600 $SSH_PRIVATE_KEY_FILE
-                                
                                 echo "Executing UNINSTALLATION playbook..."
                                 
                                 # Execute Ansible playbook for uninstallation
                                 ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \
                                     /tmp/ansibleJenkins/ansible/playbook/${SELECTED_PLAYBOOK} \
+                                    -e ansible_user="${USERNAME}" \
+                                    -e ansible_password="${PASSWORD}" \
                                     -e HOST=${TARGET_SERVER} \
                                     -e "${ANSIBLE_EXTRA_VARS}"
                             '''

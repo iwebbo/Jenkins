@@ -187,7 +187,7 @@ pipeline {
             steps {
                 script {
                     withCredentials([
-                        file(credentialsId: 'ssh-key-ansible-user-secret-file', variable: 'SSH_PRIVATE_KEY_FILE'),
+                        sshUserPrivateKey(credentialsId: 'ssh-key-ansible-user-secret-file', keyFileVariable: 'SSH_KEY_FILE', usernameVariable: 'SSH_USER'),
                         string(credentialsId: 'ha-long-lived-token', variable: 'HA_TOKEN')
                     ]) {
                         echo "🏠 Démarrage du déploiement Home Assistant..."
@@ -206,6 +206,7 @@ pipeline {
                             # Commande Ansible pour déploiement Home Assistant
                             ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \
                                 /tmp/ansibleJenkins/ansible/playbook/${SELECTED_PLAYBOOK} \
+                                -e  ansible_ssh_private_key_file="${SSH_KEY_FILE}" \
                                 -e "${ANSIBLE_EXTRA_VARS}" \
                                 -e ha_long_lived_token="${HA_TOKEN}" \
                                 ${ANSIBLE_VERBOSE_FLAG}

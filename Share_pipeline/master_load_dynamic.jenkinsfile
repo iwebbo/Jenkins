@@ -1,0 +1,154 @@
+pipeline {
+    agent any
+    
+    parameters {
+        string(
+            name: 'APP_ECOSYSTEM',
+            description: 'Nom de l\'écosystème (MYAPP, WEBAPP, etc.)'
+        )
+        text(
+            name: 'APP_CONFIG_JSON',
+            description: 'Configuration JSON de l\'application'
+        )
+        choice(
+            name: 'DEPLOYMENT_MODE',
+            choices: ['STANDARD', 'ROLLBACK', 'DRYRUN'],
+            description: 'Mode de déploiement'
+        )
+    }
+    
+    stages {
+        stage('Load Shared Code') {
+            steps {
+                script {
+                    // Récupération du code partagé
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: 'main']],
+                        userRemoteConfigs: [[
+                            url: 'https://git.company.com/jenkins-shared-library.git',
+                            credentialsId: 'git-credentials'
+                        ]],
+                        extensions: [[$class: 'RelativeTargetDirectory', relativeTargetDir: 'shared']]
+                    ])
+                    
+                    env.SHARED_FUNCTIONS_LOADED = 'true'
+                }
+            }
+        }
+        
+        stage('Parse Configuration') {
+            steps {
+                script {
+                    def appConfig = readJSON text: params.APP_CONFIG_JSON
+                    
+                    echo "=== CONFIGURATION PARSÉE ==="
+                    echo "Écosystème: ${params.APP_ECOSYSTEM}"
+                    echo "Configuration: ${appConfig}"
+                    
+                    // Stockage variables globales
+                    env.ECOSYSTEM = params.APP_ECOSYSTEM
+                    env.ENVIRONMENT = appConfig.environment ?: 'DEV'
+                    env.ROLE = appConfig.role ?: 'default'
+                    env.PLAYBOOK = appConfig.playbook
+                    
+                    // Variables spécifiques au rôle
+                    if (appConfig.roleConfig) {
+                        appConfig.roleConfig.each { key, value ->
+                            env["ROLE_${key.toUpperCase()}"] = value.toString()
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Environment Detection & Validation') {
+            steps {
+                script {
+                    // Load de la fonction de détection
+                    def envDetector = load 'shared/vars/environmentDetector.groovy'
+                    
+                    def detectedEnvs = envDetector.detect(env.ECOSYSTEM)
+                    env.AVAILABLE_ENVIRONMENTS = detectedEnvs.join(',')
+                    
+                    echo "Environnements disponibles: ${env.AVAILABLE_ENVIRONMENTS}"
+                    
+                    // Validation
+                    if (!detectedEnvs.contains(env.ENVIRONMENT)) {
+                        error("Environnement ${env.ENVIRONMENT} non autorisé. Disponibles: ${detectedEnvs}")
+                    }
+                    
+                    echo "✅ Environnement ${env.ENVIRONMENT} validé"
+                }
+            }
+        }
+        
+        stage('Generate Ansible Variables') {
+            steps {
+                script {
+                    // Load du générateur de variables
+                    def varGenerator = load 'shared/vars/ansibleVarGenerator.groovy'
+                    
+                    // Configuration pour le générateur
+                    def config = [
+                        ecosystem: env.ECOSYSTEM,
+                        environment: env.ENVIRONMENT
+                    ]
+                    
+                    // Ajout des variables de rôle depuis env
+                    env.getEnvironment().each { key, value ->
+                        if (key.startsWith('ROLE_')) {
+                            def roleKey = key.substring(5).toLowerCase()
+                            config[roleKey] = value
+                        }
+                    }
+                    
+                    // Génération des variables Ansible
+                    def ansibleVars = varGenerator.generate(config, env.ROLE)
+                    env.ANSIBLE_EXTRA_VARS = ansibleVars
+                    
+                    echo "Variables Ansible générées:"
+                    echo env.ANSIBLE_EXTRA_VARS
+                }
+            }
+        }
+        
+        stage('Execute Deployment') {
+            steps {
+                script {
+                    // Load du déployeur
+                    def deployer = load 'shared/vars/ansibleDeployer.groovy'
+                    
+                    def deployConfig = [
+                        ecosystem: env.ECOSYSTEM,
+                        environment: env.ENVIRONMENT,
+                        playbook: env.PLAYBOOK,
+                        ansibleVars: env.ANSIBLE_EXTRA_VARS,
+                        mode: params.DEPLOYMENT_MODE
+                    ]
+                    
+                    // Exécution du déploiement
+                    deployer.deploy(deployConfig)
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            script {
+                if (env.SHARED_FUNCTIONS_LOADED == 'true') {
+                    def notifier = load 'shared/vars/notificationSender.groovy'
+                    
+                    notifier.send([
+                        ecosystem: env.ECOSYSTEM,
+                        environment: env.ENVIRONMENT,
+                        result: currentBuild.currentResult,
+                        buildNumber: env.BUILD_NUMBER,
+                        buildUrl: env.BUILD_URL
+                    ])
+                }
+            }
+        }
+    }
+}

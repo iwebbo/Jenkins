@@ -69,7 +69,7 @@ pipeline {
             steps {
                 script {
                     // Définir le playbook à utiliser
-                    env.SELECTED_PLAYBOOK = 'linux_package_deployment.yml'
+                    env.SELECTED_PLAYBOOK = 'deploy_package_linux.yml'
                     echo "Playbook sélectionné: ${env.SELECTED_PLAYBOOK}"
                     
                     echo "🔍 Validation des paramètres de gestion de packages..."
@@ -111,6 +111,7 @@ pipeline {
                     sh """
                         ansible-playbook --syntax-check \
                             -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \
+                            -e HOST=${TARGET_SERVER} \
                             /tmp/ansibleJenkins/ansible/playbook/${env.SELECTED_PLAYBOOK}
                     """
                     
@@ -128,7 +129,7 @@ pipeline {
         stage('Exécution du Playbook') {
             steps {
                 script {
-                    withCredentials([file(credentialsId: 'ssh-key-ansible-user-secret-file', variable: 'SSH_KEY_FILE')]) {
+                    withCredentials([sshUserPrivateKey(credentialsId: 'ssh-key-ansible-user-secret-file', keyFileVariable: 'SSH_KEY_FILE', usernameVariable: 'SSH_USER')]) {
                         echo "🚀 Démarrage de la gestion du package..."
                         echo "Serveur: ${params.TARGET_SERVER}"
                         echo "Package: ${params.PACKAGE_NAME}"
@@ -153,6 +154,7 @@ pipeline {
                         sh """
                             ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \
                                 /tmp/ansibleJenkins/ansible/playbook/${env.SELECTED_PLAYBOOK} \
+                                -e ansible_ssh_private_key_file="${SSH_KEY_FILE}" \
                                 -e ${extraVarsString} \
                                 ${env.ANSIBLE_VERBOSE_FLAG}
                         """
@@ -169,10 +171,11 @@ pipeline {
                 script {
                     echo "✅ Vérification de l'installation du package..."
                     
-                    withCredentials([file(credentialsId: 'ssh-key-ansible-user-secret-file', variable: 'SSH_KEY_FILE')]) {
+                    withCredentials([sshUserPrivateKey(credentialsId: 'ssh-key-ansible-user-secret-file', keyFileVariable: 'SSH_KEY_FILE', usernameVariable: 'SSH_USER')]) {
                         sh """
                             ansible ${params.TARGET_SERVER} \
                                 -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \
+                                -e  ansible_ssh_private_key_file="${SSH_KEY_FILE}" \
                                 -m shell \
                                 -a "which ${params.PACKAGE_NAME} || echo 'Package ${params.PACKAGE_NAME} command not found in PATH'"
                         """
@@ -197,8 +200,6 @@ pipeline {
                 Action: ${params.PACKAGE_STATE}
                 Verbosité Ansible: ${params.ANSIBLE_VERBOSITY}
                 Playbook: ${env.SELECTED_PLAYBOOK}
-                Rôle: linux_package_manager
-                Inventaire: /tmp/ansibleJenkins/ansible/inventory/hosts.ini
                 Build: #${env.BUILD_NUMBER}
                 Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
                 Statut: ${currentBuild.currentResult}
@@ -226,7 +227,6 @@ pipeline {
                     Version: ${params.PACKAGE_VERSION ?: 'latest'}
                     Action: ${params.PACKAGE_STATE}
                     Verbosité Ansible: ${params.ANSIBLE_VERBOSITY}
-                    Rôle: linux_package_manager
                     Build: #${env.BUILD_NUMBER}
                     Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
                     Durée: ${currentBuild.durationString ?: 'N/A'}
@@ -234,8 +234,6 @@ pipeline {
                     📊 Détails du build: ${env.BUILD_URL}
 
                     Configuration utilisée:
-                    - Inventaire: /tmp/ansibleJenkins/ansible/inventory/hosts.ini
-                    - Playbook: linux_package_deployment.yml
                     - Type d'opération: ${action.capitalize()} de package
                     - Flag de verbosité: ${env.ANSIBLE_VERBOSE_FLAG ?: 'Aucun'}
 
@@ -262,15 +260,12 @@ pipeline {
                     Version: ${params.PACKAGE_VERSION ?: 'latest'}
                     Action: ${params.PACKAGE_STATE}
                     Verbosité Ansible: ${params.ANSIBLE_VERBOSITY}
-                    Rôle: linux_package_manager
                     Build: #${env.BUILD_NUMBER}
                     Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
 
                     🔍 Logs d'erreur: ${env.BUILD_URL}console
 
                     Configuration utilisée:
-                    - Inventaire: /tmp/ansibleJenkins/ansible/inventory/hosts.ini
-                    - Playbook: linux_package_deployment.yml
                     - Type d'opération: ${action.capitalize()} de package
                     - Flag de verbosité: ${env.ANSIBLE_VERBOSE_FLAG ?: 'Aucun'}
 

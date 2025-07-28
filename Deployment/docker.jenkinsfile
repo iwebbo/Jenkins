@@ -196,7 +196,13 @@ pipeline {
         stage('Exécution du Playbook Docker Compose') {
             steps {
                 script {
-                    withCredentials([file(credentialsId: 'ssh-key-ansible-user-secret-file', variable: 'SSH_PRIVATE_KEY_FILE')]) {
+                    def isLinux = env.SELECTED_PLAYBOOK.contains('_linux.yml')
+                    def isWindows = env.SELECTED_PLAYBOOK.contains('_windows.yml')
+
+                    if (isLinux) {
+                        withCredentials([
+                            sshUserPrivateKey(credentialsId: 'ssh-key-ansible-user-secret-file', keyFileVariable: 'SSH_KEY_FILE', usernameVariable: 'SSH_USER')
+                        ]) {
                         echo "🐳 Démarrage de la gestion Docker Compose..."
                         echo "Serveur: ${params.TARGET_SERVER} (${env.SERVER_TYPE})"
                         echo "Service: ${params.DOCKER_IMAGE_NAME}"
@@ -213,9 +219,38 @@ pipeline {
                             ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \
                                 /tmp/ansibleJenkins/ansible/playbook/${SELECTED_PLAYBOOK} \
                                 -e HOST=${TARGET_SERVER} \
+                                -e  ansible_ssh_private_key_file="${SSH_KEY_FILE}" \
                                 -e "${ANSIBLE_EXTRA_VARS}" \
                                 ${ANSIBLE_VERBOSE_FLAG}
                         '''
+                        }
+                    }
+                    if (isWindows) {
+                    withCredentials([
+                        usernamePassword(credentialsId: 'credentials-id-windows-user-password', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')
+                        ]) {
+                        echo "🐳 Démarrage de la gestion Docker Compose..."
+                        echo "Serveur: ${params.TARGET_SERVER} (${env.SERVER_TYPE})"
+                        echo "Service: ${params.DOCKER_IMAGE_NAME}"
+                        echo "Chemin: ${env.DOCKER_COMPOSE_PATH}"
+                        echo "Playbook: ${env.SELECTED_PLAYBOOK}"
+                        echo "Verbosité: ${params.ANSIBLE_VERBOSITY} ${env.ANSIBLE_VERBOSE_FLAG}"
+                        
+                        sh '''
+                            echo "Exécution du playbook Docker Compose..."
+                            echo "Variables utilisées: ${ANSIBLE_EXTRA_VARS}"
+                            echo "Flag de verbosité: ${ANSIBLE_VERBOSE_FLAG}"
+                            
+                            # Commande Ansible pour gestion Docker Compose
+                            ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \
+                                /tmp/ansibleJenkins/ansible/playbook/${SELECTED_PLAYBOOK} \
+                                -e HOST=${TARGET_SERVER} \
+                                -e ansible_user="${USERNAME}" \
+                                -e ansible_password="${PASSWORD}" \
+                                -e "${ANSIBLE_EXTRA_VARS}" \
+                                ${ANSIBLE_VERBOSE_FLAG}
+                        '''
+                       }
                     }
                 }
             }

@@ -225,7 +225,7 @@ pipeline {
         stage('Configuration Apache2 Reverse Proxy') {
             steps {
                 script {
-                    withCredentials([file(credentialsId: 'ssh-key-ansible-user-secret-file', variable: 'SSH_PRIVATE_KEY_FILE')]) {
+                   withCredentials([sshUserPrivateKey(credentialsId: 'ssh-key-ansible-user-secret-file', keyFileVariable: 'SSH_KEY_FILE', usernameVariable: 'SSH_USER')]) {
                         echo "🚀 Démarrage de la configuration Apache2 Reverse Proxy..."
                         echo "Nom du serveur: ${params.SERVER_NAME}"
                         echo "Backend URL: ${params.PROXY_PASS}"
@@ -234,14 +234,13 @@ pipeline {
                         echo "Verbosité: ${params.ANSIBLE_VERBOSITY} ${env.ANSIBLE_VERBOSE_FLAG}"
                         
                         sh '''
-                            chmod 600 $SSH_PRIVATE_KEY_FILE
-                            
                             echo "Exécution du playbook Apache2 Reverse Proxy..."
                             echo "Variables utilisées: ${ANSIBLE_EXTRA_VARS}"
                             echo "Flag de verbosité: ${ANSIBLE_VERBOSE_FLAG}"
                             
                             # Commande Ansible pour configuration Apache2 Reverse Proxy
                             ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \
+                                -e  ansible_ssh_private_key_file="${SSH_KEY_FILE}" \
                                 /tmp/ansibleJenkins/ansible/playbook/${SELECTED_PLAYBOOK} \
                                 -e "${ANSIBLE_EXTRA_VARS}" \
                                 ${ANSIBLE_VERBOSE_FLAG}
