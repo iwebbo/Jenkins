@@ -89,7 +89,9 @@ pipeline {
         stage('Exécution du Playbook') {
             steps {
                 script {
-                    withCredentials([file(credentialsId: 'ssh-key-ansible-user-secret-file', variable: 'SSH_KEY_FILE')]) {
+                    withCredentials([
+                        sshUserPrivateKey(credentialsId: 'ssh-key-ansible-user-secret-file', keyFileVariable: 'SSH_KEY_FILE', usernameVariable: 'SSH_USER')
+                        ]) {
                         echo "🚀 Démarrage de la mise à jour système..."
                         echo "Serveur: ${env.TARGET_SERVER}"
                         echo "Verbosité: ${env.ANSIBLE_VERBOSITY} ${env.ANSIBLE_VERBOSE_FLAG}"
@@ -97,6 +99,7 @@ pipeline {
                         sh '''
                             ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \
                                 /tmp/ansibleJenkins/ansible/playbook/update_system_linux.yml \
+                                -e  ansible_ssh_private_key_file="${SSH_KEY_FILE}" \
                                 -e HOST=${TARGET_SERVER} \
                                 ${ANSIBLE_VERBOSE_FLAG}
                         '''
