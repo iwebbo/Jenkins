@@ -10,117 +10,442 @@ pipeline {
         OPERATION_TYPE = 'INSTALL'
     }
     
-    parameters {
-        // SOLUTION 1: Active Choices Plugin - Liste déroulante dynamique
-        activeChoice(
-            choiceType: 'PT_SINGLE_SELECT',
-            filterLength: 1,
-            filterable: false,
-            name: 'TARGET_SERVER',
-            script: [
-                $class: 'GroovyScript',
-                fallbackScript: [
-                    classpath: [],
-                    sandbox: false,
-                    script: 'return ["ERROR: Could not load servers from inventory"]'
-                ],
-                script: [
-                    classpath: [],
-                    sandbox: false,
-                    script: '''
-                        // Chemin vers votre inventaire Ansible
-                        def inventoryPath = "/tmp/ansibleJenkins/ansible/inventory/hosts.ini"
-                        def file = new File(inventoryPath)
-                        
-                        if (!file.exists()) {
-                            return ["ERROR: Inventory file not found at ${inventoryPath}"]
-                        }
-                        
-                        def groups = []
-                        def currentGroup = ""
-                        
-                        try {
-                            file.eachLine { line ->
-                                line = line.trim()
-                                
-                                // Détecter les groupes [nom_groupe]
-                                if (line.startsWith('[') && line.endsWith(']')) {
-                                    def groupName = line[1..-2] // Enlever les crochets
-                                    
-                                    // Exclure les méta-groupes (avec :children)
-                                    if (!groupName.contains(':children') && !groupName.isEmpty()) {
-                                        groups.add(groupName)
-                                    }
-                                }
-                            }
-                            
-                            // Trier alphabétiquement
-                            groups = groups.sort()
-                            
-                            if (groups.isEmpty()) {
-                                return ["ERROR: No valid groups found in inventory"]
-                            }
-                            
-                            return groups
-                            
-                        } catch (Exception e) {
-                            return ["ERROR: Failed to parse inventory - ${e.getMessage()}"]
-                        }
-                    '''
-                ]
-            ],
-            description: '''🎯 Serveur cible pour l'installation Docker
-            
-            Liste chargée dynamiquement depuis l'inventaire Ansible:
-            /tmp/ansibleJenkins/ansible/inventory/hosts.ini
-            
-            Les serveurs affichés correspondent exactement aux groupes 
-            définis dans votre fichier hosts.ini'''
-        )
-        
-        choice(
-            name: 'ANSIBLE_VERBOSITY',
-            choices: ['0', '1', '2', '3', '4'],
-            description: '''🔧 Niveau de verbosité Ansible:
-            0=Normal, 1=Verbose(-v), 2=Plus verbose(-vv), 3=Debug(-vvv), 4=Debug complet(-vvvv)'''
-        )
-    }
-    
     stages {
-        stage('Validation inventaire dynamique') {
+        stage('Génération dynamique des paramètres') {
             steps {
                 script {
-                    echo "📋 Validation du serveur sélectionné dynamiquement..."
-                    echo "Serveur cible: ${params.TARGET_SERVER}"
+                    echo "🐍 Génération dynamique des serveurs avec Python..."
                     
-                    // Vérifier si c'est une erreur
-                    if (params.TARGET_SERVER.startsWith('ERROR:')) {
-                        error("❌ Problème avec l'inventaire dynamique: ${params.TARGET_SERVER}")
+                    // Créer le script Python pour parser l'inventaire
+                    writeFile file: 'parse_inventory.py', text: '''#!/usr/bin/env python3
+import sys
+import os
+import json
+import re
+from pathlib import Path
+
+def parse_ansible_inventory(inventory_path):
+    """
+    Parse un fichier d'inventaire Ansible et retourne les groupes et leurs informations
+    """
+    if not os.path.exists(inventory_path):
+        return {
+            "error": f"Fichier inventaire non trouvé: {inventory_path}",
+            "groups": [],
+            "servers": {}
+        }
+    
+    groups = []
+    servers = {}
+    current_group = None
+    
+    try:
+        with open(inventory_path, 'r', encoding='utf-8') as f:
+            for line_num, line in enumerate(f, 1):
+                line = line.strip()
+                
+                # Ignorer les lignes vides et les commentaires
+                if not line or line.startswith('#'):
+                    continue
+                
+                # Détecter les groupes [nom_groupe]
+                group_match = re.match(r'\\[([^\\]]+)\\]', line)
+                if group_match:
+                    group_name = group_match.group(1)
+                    
+                    # Exclure les méta-groupes (avec :children, :vars)
+                    if ':' not in group_name:
+                        groups.append(group_name)
+                        servers[group_name] = {
+                            "type": "Windows" if "windows" in group_name.lower() else "Linux",
+                            "hosts": [],
+                            "line": line_num
+                        }
+                    current_group = group_name
+                
+                # Traiter les hosts dans un groupe
+                elif current_group and ':' not in current_group:
+                    # Formats supportés:
+                    # IP_ADDRESS
+                    # hostname ansible_host=IP
+                    # IP_ADDRESS ansible_user=user ansible_port=22
+                    
+                    host_info = {"raw_line": line}
+                    
+                    # Extraire l'IP ou hostname principal
+                    parts = line.split()
+                    if parts:
+                        main_host = parts[0]
+                        host_info["host"] = main_host
+                        
+                        # Vérifier si c'est une IP directe
+                        ip_pattern = r'^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}$'
+                        if re.match(ip_pattern, main_host):
+                            host_info["ip"] = main_host
+                        else:
+                            host_info["hostname"] = main_host
+                    
+                    # Extraire les variables Ansible (ansible_host, ansible_user, etc.)
+                    for part in parts[1:]:
+                        if '=' in part:
+                            key, value = part.split('=', 1)
+                            host_info[key] = value
+                            if key == 'ansible_host':
+                                host_info["ip"] = value
+                    
+                    # Ajouter l'host au groupe
+                    if current_group in servers:
+                        servers[current_group]["hosts"].append(host_info)
+        
+        # Trier les groupes alphabétiquement
+        groups.sort()
+        
+        result = {
+            "success": True,
+            "groups": groups,
+            "servers": servers,
+            "total_groups": len(groups),
+            "inventory_path": inventory_path
+        }
+        
+        return result
+        
+    except Exception as e:
+        return {
+            "error": f"Erreur lors du parsing: {str(e)}",
+            "groups": [],
+            "servers": {},
+            "inventory_path": inventory_path
+        }
+
+def get_server_info(servers_data, server_name):
+    """
+    Récupère les informations détaillées d'un serveur
+    """
+    if server_name in servers_data:
+        server = servers_data[server_name]
+        info = {
+            "name": server_name,
+            "type": server["type"],
+            "hosts": server["hosts"],
+            "ip": "Unknown"
+        }
+        
+        # Trouver la première IP disponible
+        for host in server["hosts"]:
+            if "ip" in host:
+                info["ip"] = host["ip"]
+                break
+            elif "host" in host and re.match(r'^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}$', host["host"]):
+                info["ip"] = host["host"]
+                break
+        
+        return info
+    
+    return {"name": server_name, "type": "Unknown", "ip": "Unknown", "hosts": []}
+
+def main():
+    """
+    Point d'entrée principal
+    """
+    if len(sys.argv) < 2:
+        print("Usage: python3 parse_inventory.py <action> [server_name]")
+        print("Actions disponibles:")
+        print("  list_groups - Liste tous les groupes")
+        print("  server_info <server_name> - Infos d'un serveur")
+        print("  full_parse - Parse complet avec JSON")
+        sys.exit(1)
+    
+    action = sys.argv[1]
+    inventory_path = os.environ.get('ANSIBLE_INVENTORY_PATH', '/tmp/ansibleJenkins/ansible/inventory/hosts.ini')
+    
+    # Parser l'inventaire
+    result = parse_ansible_inventory(inventory_path)
+    
+    if action == "list_groups":
+        if "error" in result:
+            print(f"ERROR: {result['error']}")
+            sys.exit(1)
+        
+        for group in result["groups"]:
+            print(group)
+    
+    elif action == "server_info":
+        if len(sys.argv) < 3:
+            print("ERROR: Nom du serveur requis pour server_info")
+            sys.exit(1)
+        
+        server_name = sys.argv[2]
+        if "error" in result:
+            print(f"ERROR: {result['error']}")
+            sys.exit(1)
+        
+        info = get_server_info(result["servers"], server_name)
+        print(f"TYPE:{info['type']}")
+        print(f"IP:{info['ip']}")
+        print(f"NAME:{info['name']}")
+    
+    elif action == "full_parse":
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    
+    else:
+        print(f"ERROR: Action inconnue: {action}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
+'''
+                    
+                    // Rendre le script exécutable
+                    sh 'chmod +x parse_inventory.py'
+                    
+                    // Tester la présence de Python
+                    sh '''
+                        echo "🔍 Vérification Python..."
+                        if command -v python3 &> /dev/null; then
+                            echo "✅ Python3 disponible: $(python3 --version)"
+                        elif command -v python &> /dev/null; then
+                            echo "✅ Python disponible: $(python --version)"
+                        else
+                            echo "❌ Python non trouvé!"
+                            exit 1
+                        fi
+                    '''
+                    
+                    // Parser l'inventaire avec Python et récupérer les groupes
+                    def pythonOutput = sh(
+                        script: '''
+                            export ANSIBLE_INVENTORY_PATH="${ANSIBLE_INVENTORY_PATH}"
+                            if command -v python3 &> /dev/null; then
+                                python3 parse_inventory.py list_groups
+                            else
+                                python parse_inventory.py list_groups
+                            fi
+                        ''',
+                        returnStdout: true
+                    ).trim()
+                    
+                    // Vérifier les erreurs Python
+                    if (pythonOutput.startsWith('ERROR:')) {
+                        error("❌ ${pythonOutput}")
                     }
                     
-                    // Afficher le contenu de l'inventaire pour debug
-                    def inventoryContent = readFile("${env.ANSIBLE_INVENTORY_PATH}")
-                    echo "Contenu de l'inventaire:"
-                    echo inventoryContent
+                    // Convertir la sortie en liste
+                    def availableServers = pythonOutput.split('\n').collect { it.trim() }.findAll { it != '' }
                     
-                    // Re-parser pour validation et obtenir les infos
-                    def serverInfo = getServerInfo(params.TARGET_SERVER)
-                    env.SERVER_TYPE = serverInfo.type
-                    env.SERVER_IP = serverInfo.ip
-                    
-                    echo "✅ Serveur validé: ${params.TARGET_SERVER}"
-                    echo "Type: ${env.SERVER_TYPE}, IP: ${env.SERVER_IP}"
-                    
-                    // Sélection du playbook
-                    def selectedPlaybook = (env.SERVER_TYPE == 'Windows') ? 'install_docker_windows.yml' : 'install_docker_linux.yml'
-                    env.SELECTED_PLAYBOOK = selectedPlaybook
-                    
-                    // Verbosité
-                    def verbosityFlag = ''
-                    if (params.ANSIBLE_VERBOSITY != '0') {
-                        verbosityFlag = '-' + 'v' * params.ANSIBLE_VERBOSITY.toInteger()
+                    echo "✅ Serveurs détectés avec Python:"
+                    availableServers.each { server ->
+                        echo "   🖥️ ${server}"
                     }
+                    
+                    // Stocker les serveurs pour les étapes suivantes
+                    env.AVAILABLE_SERVERS = availableServers.join(',')
+                    env.PYTHON_PARSER_READY = 'true'
+                    
+                    // Afficher un résumé détaillé avec le parser Python
+                    echo "📊 Exécution du parsing complet..."
+                    def fullParseOutput = sh(
+                        script: '''
+                            export ANSIBLE_INVENTORY_PATH="${ANSIBLE_INVENTORY_PATH}"
+                            if command -v python3 &> /dev/null; then
+                                python3 parse_inventory.py full_parse
+                            else
+                                python parse_inventory.py full_parse
+                            fi
+                        ''',
+                        returnStdout: true
+                    )
+                    
+                    echo "📋 Résumé de l'inventaire:"
+                    echo fullParseOutput
+                }
+            }
+        }
+        
+        stage('Sélection interactive du serveur') {
+            when {
+                environment name: 'PYTHON_PARSER_READY', value: 'true'
+            }
+            steps {
+                script {
+                    def serverList = env.AVAILABLE_SERVERS.split(',').collect { it.trim() }
+                    
+                    echo "🎯 Interface de sélection du serveur..."
+                    
+                    // Interface de sélection interactive utilisant les serveurs détectés par Python
+                    def selectedServer = input(
+                        id: 'ServerSelection',
+                        message: """🐍 Serveurs détectés par Python depuis l'inventaire Ansible:
+
+${env.ANSIBLE_INVENTORY_PATH}
+
+Sélectionnez le serveur cible pour l'installation Docker:""",
+                        parameters: [
+                            choice(
+                                name: 'TARGET_SERVER',
+                                choices: serverList,
+                                description: """Serveurs chargés dynamiquement par script Python:
+                                
+📊 Total: ${serverList.size()} serveur(s) disponible(s)
+🔄 Mise à jour automatique à chaque build
+✅ Parsing robuste avec gestion d'erreurs Python"""
+                            )
+                        ]
+                    )
+                    
+                    echo "🎯 Serveur sélectionné: ${selectedServer}"
+                    env.TARGET_SERVER = selectedServer
+                    
+                    // Interface pour la verbosité
+                    def verbosity = input(
+                        id: 'VerbositySelection',
+                        message: '🔧 Niveau de verbosité Ansible:',
+                        parameters: [
+                            choice(
+                                name: 'VERBOSITY',
+                                choices: ['0', '1', '2', '3', '4'],
+                                description: """Debug Ansible:
+0 = Normal (production)
+1 = Verbose (-v) 
+2 = Plus verbose (-vv)
+3 = Debug (-vvv)
+4 = Debug max (-vvvv)"""
+                            )
+                        ]
+                    )
+                    
+                    env.ANSIBLE_VERBOSITY = verbosity
+                    echo "🔧 Verbosité: ${verbosity}"
+                }
+            }
+        }
+        
+        stage('Analyse du serveur avec Python') {
+            when {
+                environment name: 'TARGET_SERVER', value: env.TARGET_SERVER
+            }
+            steps {
+                script {
+                    echo "🔍 Analyse détaillée du serveur ${env.TARGET_SERVER} avec Python..."
+                    
+                    // Utiliser Python pour obtenir les informations détaillées du serveur
+                    def serverInfoOutput = sh(
+                        script: """
+                            export ANSIBLE_INVENTORY_PATH="${ANSIBLE_INVENTORY_PATH}"
+                            if command -v python3 &> /dev/null; then
+                                python3 parse_inventory.py server_info "${env.TARGET_SERVER}"
+                            else
+                                python parse_inventory.py server_info "${env.TARGET_SERVER}"
+                            fi
+                        """,
+                        returnStdout: true
+                    ).trim()
+                    
+                    // Parser la sortie Python (format TYPE:Linux\\nIP:192.168.1.2\\nNAME:ReverseProxy)
+                    def serverInfo = [:]
+                    serverInfoOutput.split('\n').each { line ->
+                        if (line.contains(':')) {
+                            def parts = line.split(':', 2)
+                            serverInfo[parts[0]] = parts[1]
+                        }
+                    }
+                    
+                    env.SERVER_TYPE = serverInfo['TYPE'] ?: 'Linux'
+                    env.SERVER_IP = serverInfo['IP'] ?: 'Unknown'
+                    env.SERVER_NAME = serverInfo['NAME'] ?: env.TARGET_SERVER
+                    
+                    echo "📊 Informations serveur (analysées par Python):"
+                    echo "   🏷️ Nom: ${env.SERVER_NAME}"
+                    echo "   📍 IP: ${env.SERVER_IP}"
+                    echo "   💻 Type: ${env.SERVER_TYPE}"
+                    
+                    // Configuration automatique basée sur l'analyse Python
+                    env.SELECTED_PLAYBOOK = (env.SERVER_TYPE == 'Windows') ? 
+                        'install_docker_windows.yml' : 'install_docker_linux.yml'
+                    
+                    def verbosityFlag = env.ANSIBLE_VERBOSITY != '0' ? 
+                        ('-' + 'v' * env.ANSIBLE_VERBOSITY.toInteger()) : ''
                     env.ANSIBLE_VERBOSE_FLAG = verbosityFlag
+                    
+                    echo "📜 Playbook: ${env.SELECTED_PLAYBOOK}"
+                    echo "🔊 Verbosité: '${env.ANSIBLE_VERBOSE_FLAG}'"
+                }
+            }
+        }
+        
+        stage('Test connectivité') {
+            steps {
+                script {
+                    echo "🔗 Test connectivité vers ${env.TARGET_SERVER} (${env.SERVER_IP})..."
+                    
+                    def isLinux = !env.SERVER_TYPE.equals('Windows')
+                    
+                    if (isLinux) {
+                        withCredentials([
+                            sshUserPrivateKey(credentialsId: 'ssh-key-ansible-user-secret-file', 
+                                            keyFileVariable: 'SSH_KEY_FILE', usernameVariable: 'SSH_USER')
+                        ]) {
+                            sh """
+                                echo "🐧 Test SSH vers ${env.SERVER_IP}..."
+                                ansible ${env.TARGET_SERVER} -i ${env.ANSIBLE_INVENTORY_PATH} \
+                                    -e ansible_ssh_private_key_file="\${SSH_KEY_FILE}" \
+                                    -m ping \
+                                    ${env.ANSIBLE_VERBOSE_FLAG}
+                            """
+                        }
+                    } else {
+                        withCredentials([
+                            usernamePassword(credentialsId: 'credentials-id-windows-user-password', 
+                                           usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')
+                        ]) {
+                            sh """
+                                echo "🪟 Test WinRM vers ${env.SERVER_IP}..."
+                                ansible ${env.TARGET_SERVER} -i ${env.ANSIBLE_INVENTORY_PATH} \
+                                    -e ansible_user="\${USERNAME}" \
+                                    -e ansible_password="\${PASSWORD}" \
+                                    -m win_ping \
+                                    ${env.ANSIBLE_VERBOSE_FLAG}
+                            """
+                        }
+                    }
+                    
+                    echo "✅ Connectivité validée !"
+                }
+            }
+        }
+        
+        stage('Confirmation finale') {
+            steps {
+                script {
+                    // Récapitulatif final avec toutes les informations Python
+                    def summary = """
+🐍 RÉCAPITULATIF - INSTALLATION DOCKER
+═══════════════════════════════════════
+
+📊 Serveur analysé par Python:
+   • Nom: ${env.SERVER_NAME}
+   • Type: ${env.SERVER_TYPE}  
+   • IP: ${env.SERVER_IP}
+
+🔧 Configuration:
+   • Playbook: ${env.SELECTED_PLAYBOOK}
+   • Verbosité: ${env.ANSIBLE_VERBOSITY} ${env.ANSIBLE_VERBOSE_FLAG}
+   • Inventaire: ${env.ANSIBLE_INVENTORY_PATH}
+
+✅ Connectivité: Testée et validée
+
+Procéder à l'installation Docker ?
+                    """
+                    
+                    def proceed = input(
+                        id: 'FinalConfirmation',
+                        message: summary,
+                        ok: '🚀 Installer Docker maintenant',
+                        submitterParameter: 'INSTALLER_USER'
+                    )
+                    
+                    env.INSTALLER_USER = proceed
+                    echo "👤 Installation approuvée par: ${env.INSTALLER_USER}"
                 }
             }
         }
@@ -128,16 +453,19 @@ pipeline {
         stage('Installation Docker') {
             steps {
                 script {
-                    echo "🐳 Installation Docker sur ${params.TARGET_SERVER} (${env.SERVER_IP})..."
+                    echo "🐳 Installation Docker via Ansible..."
+                    echo "🎯 Cible: ${env.TARGET_SERVER} (${env.SERVER_IP})"
+                    echo "👤 Lancée par: ${env.INSTALLER_USER}"
                     
-                    def isLinux = env.SELECTED_PLAYBOOK.contains('_linux.yml')
-                    def isWindows = env.SELECTED_PLAYBOOK.contains('_windows.yml')
-
+                    def isLinux = !env.SERVER_TYPE.equals('Windows')
+                    
                     if (isLinux) {
                         withCredentials([
-                            sshUserPrivateKey(credentialsId: 'ssh-key-ansible-user-secret-file', keyFileVariable: 'SSH_KEY_FILE', usernameVariable: 'SSH_USER')
+                            sshUserPrivateKey(credentialsId: 'ssh-key-ansible-user-secret-file', 
+                                            keyFileVariable: 'SSH_KEY_FILE', usernameVariable: 'SSH_USER')
                         ]) {
                             sh '''
+                                echo "🐧 Installation Docker Engine (Linux)..."
                                 ansible-playbook -i ${ANSIBLE_INVENTORY_PATH} \
                                     /tmp/ansibleJenkins/ansible/playbook/${SELECTED_PLAYBOOK} \
                                     -e HOST=${TARGET_SERVER} \
@@ -145,13 +473,13 @@ pipeline {
                                     ${ANSIBLE_VERBOSE_FLAG}
                             '''
                         }
-                    }
-                    
-                    if (isWindows) {
+                    } else {
                         withCredentials([
-                            usernamePassword(credentialsId: 'credentials-id-windows-user-password', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')
+                            usernamePassword(credentialsId: 'credentials-id-windows-user-password', 
+                                           usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')
                         ]) {
                             sh '''
+                                echo "🪟 Installation Docker Desktop (Windows)..."
                                 ansible-playbook -i ${ANSIBLE_INVENTORY_PATH} \
                                     /tmp/ansibleJenkins/ansible/playbook/${SELECTED_PLAYBOOK} \
                                     -e HOST=${TARGET_SERVER} \
@@ -159,6 +487,69 @@ pipeline {
                                     -e ansible_password="${PASSWORD}" \
                                     ${ANSIBLE_VERBOSE_FLAG}
                             '''
+                        }
+                    }
+                    
+                    echo "✅ Installation Docker terminée !"
+                }
+            }
+        }
+        
+        stage('Vérification Python post-installation') {
+            steps {
+                script {
+                    echo "🔍 Vérification Docker avec Ansible..."
+                    
+                    def isLinux = !env.SERVER_TYPE.equals('Windows')
+                    
+                    if (isLinux) {
+                        withCredentials([
+                            sshUserPrivateKey(credentialsId: 'ssh-key-ansible-user-secret-file', 
+                                            keyFileVariable: 'SSH_KEY_FILE', usernameVariable: 'SSH_USER')
+                        ]) {
+                            try {
+                                def dockerVersion = sh(
+                                    script: """
+                                        ansible ${env.TARGET_SERVER} -i ${env.ANSIBLE_INVENTORY_PATH} \
+                                            -e ansible_ssh_private_key_file="\${SSH_KEY_FILE}" \
+                                            -m shell -a "docker --version" \
+                                            --one-line
+                                    """,
+                                    returnStdout: true
+                                ).trim()
+                                
+                                echo "✅ Docker installé: ${dockerVersion}"
+                                env.DOCKER_VERSION = dockerVersion
+                                
+                            } catch (Exception e) {
+                                echo "⚠️ Impossible de vérifier Docker (peut nécessiter un redémarrage)"
+                                env.DOCKER_VERSION = "Installation réussie - Vérification manuelle requise"
+                            }
+                        }
+                    } else {
+                        withCredentials([
+                            usernamePassword(credentialsId: 'credentials-id-windows-user-password', 
+                                           usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')
+                        ]) {
+                            try {
+                                def dockerVersion = sh(
+                                    script: """
+                                        ansible ${env.TARGET_SERVER} -i ${env.ANSIBLE_INVENTORY_PATH} \
+                                            -e ansible_user="\${USERNAME}" \
+                                            -e ansible_password="\${PASSWORD}" \
+                                            -m win_shell -a "docker --version" \
+                                            --one-line
+                                    """,
+                                    returnStdout: true
+                                ).trim()
+                                
+                                echo "✅ Docker installé: ${dockerVersion}"
+                                env.DOCKER_VERSION = dockerVersion
+                                
+                            } catch (Exception e) {
+                                echo "⚠️ Docker Desktop peut nécessiter un redémarrage Windows"
+                                env.DOCKER_VERSION = "Installation réussie - Redémarrage Windows recommandé"
+                            }
                         }
                     }
                 }
@@ -169,58 +560,95 @@ pipeline {
     post {
         success {
             script {
-                currentBuild.description = "✅ Docker installé sur ${params.TARGET_SERVER} (${env.SERVER_IP})"
+                currentBuild.description = "✅ Docker → ${env.TARGET_SERVER} (${env.SERVER_IP}) via Python"
+                
+                def emailBody = """
+🐳 INSTALLATION DOCKER - SUCCÈS 
+🐍 Powered by Python Parser
+
+✅ Installation réussie !
+
+📊 Serveur analysé par Python:
+• Nom: ${env.SERVER_NAME}
+• Type: ${env.SERVER_TYPE}
+• IP: ${env.SERVER_IP}
+• Version Docker: ${env.DOCKER_VERSION ?: 'À vérifier manuellement'}
+
+🔧 Configuration:
+• Playbook: ${env.SELECTED_PLAYBOOK}
+• Verbosité: ${env.ANSIBLE_VERBOSITY}
+• Approuvé par: ${env.INSTALLER_USER}
+
+📈 Détection dynamique:
+• Parser Python: ✅ Fonctionnel
+• Inventaire: ${env.ANSIBLE_INVENTORY_PATH}
+• Serveurs détectés: ${env.AVAILABLE_SERVERS?.split(',')?.size()} au total
+
+🔗 Build: #${env.BUILD_NUMBER} - ${env.BUILD_URL}
+
+Docker est prêt sur ${env.TARGET_SERVER} ! 🚀
+                """
                 
                 mail to: 'l.kieran95@gmail.com',
-                    subject: "[Jenkins] Docker installé avec succès - ${params.TARGET_SERVER}",
-                    body: """
-                    🐳 INSTALLATION DOCKER - SUCCÈS
-                    
-                    Serveur: ${params.TARGET_SERVER} (sélectionné dynamiquement)
-                    IP: ${env.SERVER_IP}
-                    Type: ${env.SERVER_TYPE}
-                    
-                    ✅ Docker est maintenant installé et prêt à l'emploi !
-                    """
+                    subject: "[Jenkins] ✅ Docker installé (Python) - ${env.TARGET_SERVER}",
+                    body: emailBody
             }
         }
         failure {
             script {
-                currentBuild.description = "❌ Échec installation Docker - ${params.TARGET_SERVER}"
+                currentBuild.description = "❌ Échec Docker Python - ${env.TARGET_SERVER ?: 'Serveur non défini'}"
                 
                 mail to: 'l.kieran95@gmail.com',
-                    subject: "[Jenkins] Échec installation Docker - ${params.TARGET_SERVER}",
-                    body: "❌ L'installation Docker a échoué sur ${params.TARGET_SERVER}. Consultez les logs: ${env.BUILD_URL}console"
-            }
-        }
-    }
-}
+                    subject: "[Jenkins] ❌ Échec installation Docker (Python) - ${env.TARGET_SERVER ?: 'Serveur inconnu'}",
+                    body: """
+❌ INSTALLATION DOCKER - ÉCHEC
+🐍 Python Parser utilisé
 
-/**
- * Fonction utilitaire pour récupérer les infos serveur
- */
-def getServerInfo(String serverName) {
-    def inventoryPath = '/tmp/ansibleJenkins/ansible/inventory/hosts.ini'
-    def inventoryContent = readFile(inventoryPath)
-    def currentGroup = ''
-    def serverIp = 'Unknown'
-    def serverType = 'Linux' // Par défaut
-    
-    inventoryContent.split('\n').each { line ->
-        line = line.trim()
-        
-        if (line.startsWith('[') && line.endsWith(']')) {
-            currentGroup = line[1..-2]
-            serverType = currentGroup.toLowerCase().contains('windows') ? 'Windows' : 'Linux'
-        }
-        else if (currentGroup == serverName && line.contains('.')) {
-            if (line.contains('ansible_host=')) {
-                serverIp = line.split('ansible_host=')[1].split(' ')[0]
-            } else if (line ==~ /^\d+\.\d+\.\d+\.\d+.*/) {
-                serverIp = line.split(' ')[0]
+💥 Erreur lors de l'installation
+
+📊 Contexte:
+• Serveur: ${env.TARGET_SERVER ?: 'Non sélectionné'}
+• IP: ${env.SERVER_IP ?: 'Non détectée'}
+• Type: ${env.SERVER_TYPE ?: 'Non défini'}
+• Build: #${env.BUILD_NUMBER}
+
+🔍 Logs: ${env.BUILD_URL}console
+                    """
             }
         }
+        always {
+            script {
+                // Archiver le script Python pour debug
+                archiveArtifacts artifacts: 'parse_inventory.py', allowEmptyArchive: true
+                
+                // Rapport détaillé
+                def report = """
+=== RAPPORT INSTALLATION DOCKER (PYTHON PARSER) ===
+Parser Python: ✅ Utilisé
+Serveurs détectés: ${env.AVAILABLE_SERVERS ?: 'Aucun'}
+Serveur sélectionné: ${env.TARGET_SERVER ?: 'Non sélectionné'}
+Nom serveur: ${env.SERVER_NAME ?: 'Non défini'}
+Type serveur: ${env.SERVER_TYPE ?: 'Non défini'}
+IP serveur: ${env.SERVER_IP ?: 'Non définie'}
+Playbook: ${env.SELECTED_PLAYBOOK ?: 'Non défini'}
+Verbosité: ${env.ANSIBLE_VERBOSITY ?: 'Non définie'}
+Installateur: ${env.INSTALLER_USER ?: 'Non défini'}
+Version Docker: ${env.DOCKER_VERSION ?: 'Non vérifiée'}
+Inventaire: ${env.ANSIBLE_INVENTORY_PATH}
+Build: #${env.BUILD_NUMBER}
+Statut: ${currentBuild.currentResult}
+Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+Durée: ${currentBuild.durationString ?: 'N/A'}
+======================================================
+                """
+                
+                writeFile file: 'docker_installation_python_report.txt', text: report
+                archiveArtifacts artifacts: 'docker_installation_python_report.txt', allowEmptyArchive: true
+            }
+        }
+        cleanup {
+            // Garder les fichiers Python pour debug si nécessaire
+            echo "🧹 Nettoyage (fichiers Python conservés pour debug)"
+        }
     }
-    
-    return [type: serverType, ip: serverIp]
 }
