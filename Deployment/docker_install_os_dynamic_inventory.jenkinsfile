@@ -2,20 +2,16 @@ pipeline {
     agent any
     
     environment {
-        // Variables d'environnement Ansible
         ANSIBLE_HOST_KEY_CHECKING = 'False'
-        ANSIBLE_FORKS = '2'  // Optimisé pour Raspberry Pi
+        ANSIBLE_FORKS = '2'
         ANSIBLE_CONFIG = '/tmp/ansibleJenkins/ansible/ansible.cfg'
         ANSIBLE_INVENTORY_PATH = '/tmp/ansibleJenkins/ansible/inventory/hosts.ini'
-        // Variables spécifiques pour le template post
         DEPLOYMENT_TYPE = 'DOCKER_INSTALLATION'
         OPERATION_TYPE = 'INSTALL'
     }
     
     parameters {
-        // Paramètre dynamique avec Active Choices Plugin
-        // Alternative 1: Si vous avez Active Choices Plugin installé
-        /*
+        // SOLUTION 1: Active Choices Plugin - Liste déroulante dynamique
         activeChoice(
             choiceType: 'PT_SINGLE_SELECT',
             filterLength: 1,
@@ -23,190 +19,108 @@ pipeline {
             name: 'TARGET_SERVER',
             script: [
                 $class: 'GroovyScript',
+                fallbackScript: [
+                    classpath: [],
+                    sandbox: false,
+                    script: 'return ["ERROR: Could not load servers from inventory"]'
+                ],
                 script: [
                     classpath: [],
                     sandbox: false,
                     script: '''
+                        // Chemin vers votre inventaire Ansible
                         def inventoryPath = "/tmp/ansibleJenkins/ansible/inventory/hosts.ini"
                         def file = new File(inventoryPath)
+                        
                         if (!file.exists()) {
                             return ["ERROR: Inventory file not found at ${inventoryPath}"]
                         }
                         
                         def groups = []
-                        file.eachLine { line ->
-                            line = line.trim()
-                            if (line.startsWith('[') && line.endsWith(']')) {
-                                def groupName = line[1..-2]
-                                if (!groupName.contains(':children')) {
-                                    groups.add(groupName)
+                        def currentGroup = ""
+                        
+                        try {
+                            file.eachLine { line ->
+                                line = line.trim()
+                                
+                                // Détecter les groupes [nom_groupe]
+                                if (line.startsWith('[') && line.endsWith(']')) {
+                                    def groupName = line[1..-2] // Enlever les crochets
+                                    
+                                    // Exclure les méta-groupes (avec :children)
+                                    if (!groupName.contains(':children') && !groupName.isEmpty()) {
+                                        groups.add(groupName)
+                                    }
                                 }
                             }
+                            
+                            // Trier alphabétiquement
+                            groups = groups.sort()
+                            
+                            if (groups.isEmpty()) {
+                                return ["ERROR: No valid groups found in inventory"]
+                            }
+                            
+                            return groups
+                            
+                        } catch (Exception e) {
+                            return ["ERROR: Failed to parse inventory - ${e.getMessage()}"]
                         }
-                        return groups.sort()
                     '''
                 ]
             ],
-            description: 'Serveur cible pour l\'installation Docker (chargé dynamiquement depuis l\'inventaire Ansible)'
-        )
-        */
-        
-        // Alternative 2: Paramètre string pour saisie manuelle avec validation
-        string(
-            name: 'TARGET_SERVER',
-            defaultValue: '',
-            description: '''🎯 Nom du serveur cible (sera validé contre l'inventaire Ansible):
+            description: '''🎯 Serveur cible pour l'installation Docker
             
-            Serveurs disponibles dans votre inventaire:
-            - ReverseProxy (192.168.1.2)
-            - Windows (192.168.1.37) 
-            - HomeAssistant (192.168.1.16)
-            - RaspberryPi2 (127.0.0.1)
-            - ServerVM1 (192.168.1.17)
+            Liste chargée dynamiquement depuis l'inventaire Ansible:
+            /tmp/ansibleJenkins/ansible/inventory/hosts.ini
             
-            ⚠️ Saisissez exactement le nom du groupe comme dans l'inventaire'''
+            Les serveurs affichés correspondent exactement aux groupes 
+            définis dans votre fichier hosts.ini'''
         )
         
         choice(
             name: 'ANSIBLE_VERBOSITY',
-            choices: [
-                '0',
-                '1',
-                '2',
-                '3',
-                '4'
-            ],
+            choices: ['0', '1', '2', '3', '4'],
             description: '''🔧 Niveau de verbosité Ansible:
-            
-            0 = Normal (défaut)
-            1 = Verbose (-v)
-            2 = Plus verbose (-vv)
-            3 = Debug (-vvv)
-            4 = Debug complet (-vvvv)'''
+            0=Normal, 1=Verbose(-v), 2=Plus verbose(-vv), 3=Debug(-vvv), 4=Debug complet(-vvvv)'''
         )
     }
     
     stages {
-        stage('Affichage inventaire détecté') {
+        stage('Validation inventaire dynamique') {
             steps {
                 script {
-                    echo "📋 Inventaire Ansible détecté automatiquement:"
-                    echo "Fichier: ${env.ANSIBLE_INVENTORY_PATH}"
+                    echo "📋 Validation du serveur sélectionné dynamiquement..."
+                    echo "Serveur cible: ${params.TARGET_SERVER}"
                     
-                    // Lire et afficher le contenu de l'inventaire
+                    // Vérifier si c'est une erreur
+                    if (params.TARGET_SERVER.startsWith('ERROR:')) {
+                        error("❌ Problème avec l'inventaire dynamique: ${params.TARGET_SERVER}")
+                    }
+                    
+                    // Afficher le contenu de l'inventaire pour debug
                     def inventoryContent = readFile("${env.ANSIBLE_INVENTORY_PATH}")
                     echo "Contenu de l'inventaire:"
                     echo inventoryContent
                     
-                    // Parser et afficher les groupes disponibles
-                    def availableGroups = getAnsibleGroups()
-                    echo "Groupes disponibles détectés: ${availableGroups.join(', ')}"
-                    echo "Serveur sélectionné: ${params.TARGET_SERVER}"
-                }
-            }
-        }
-        
-        stage('Validation des paramètres') {
-            steps {
-                script {
-                    echo "🔍 Validation des paramètres d'installation Docker..."
-                    echo "Serveur cible: ${params.TARGET_SERVER}"
-                    echo "Verbosité Ansible: ${params.ANSIBLE_VERBOSITY}"
+                    // Re-parser pour validation et obtenir les infos
+                    def serverInfo = getServerInfo(params.TARGET_SERVER)
+                    env.SERVER_TYPE = serverInfo.type
+                    env.SERVER_IP = serverInfo.ip
                     
-                    // Vérifier que le groupe sélectionné existe dans l'inventaire
-                    def availableGroups = getAnsibleGroups()
-                    if (!availableGroups.contains(params.TARGET_SERVER)) {
-                        error("Le serveur '${params.TARGET_SERVER}' n'existe pas dans l'inventaire Ansible!")
-                    }
+                    echo "✅ Serveur validé: ${params.TARGET_SERVER}"
+                    echo "Type: ${env.SERVER_TYPE}, IP: ${env.SERVER_IP}"
                     
-                    // Déterminer le flag de verbosité
+                    // Sélection du playbook
+                    def selectedPlaybook = (env.SERVER_TYPE == 'Windows') ? 'install_docker_windows.yml' : 'install_docker_linux.yml'
+                    env.SELECTED_PLAYBOOK = selectedPlaybook
+                    
+                    // Verbosité
                     def verbosityFlag = ''
                     if (params.ANSIBLE_VERBOSITY != '0') {
                         verbosityFlag = '-' + 'v' * params.ANSIBLE_VERBOSITY.toInteger()
                     }
                     env.ANSIBLE_VERBOSE_FLAG = verbosityFlag
-                    echo "Flag de verbosité: '${env.ANSIBLE_VERBOSE_FLAG}'"
-                    
-                    // Déterminer le type de serveur et l'adresse IP
-                    def serverInfo = getServerInfo(params.TARGET_SERVER)
-                    env.SERVER_TYPE = serverInfo.type
-                    env.SERVER_IP = serverInfo.ip
-                    
-                    echo "Type de serveur détecté: ${env.SERVER_TYPE}"
-                    echo "Adresse IP du serveur: ${env.SERVER_IP}"
-                    
-                    // Déterminer le playbook selon le type de serveur
-                    def selectedPlaybook = (env.SERVER_TYPE == 'Windows') ? 'install_docker_windows.yml' : 'install_docker_linux.yml'
-                    env.SELECTED_PLAYBOOK = selectedPlaybook
-                    echo "Playbook sélectionné: ${env.SELECTED_PLAYBOOK}"
-                    
-                    // Stocker les variables pour le post
-                    env.DOCKER_INSTALLATION_TARGET = params.TARGET_SERVER
-                }
-            }
-        }
-        
-        stage('Vérification connectivité serveur') {
-            steps {
-                script {
-                    echo "🔗 Test de connectivité vers ${params.TARGET_SERVER} (${env.SERVER_IP})..."
-                    
-                    // Tester la connectivité avec Ansible
-                    def isLinux = env.SELECTED_PLAYBOOK.contains('_linux.yml')
-                    def isWindows = env.SELECTED_PLAYBOOK.contains('_windows.yml')
-
-                    if (isLinux) {
-                        withCredentials([
-                            sshUserPrivateKey(credentialsId: 'ssh-key-ansible-user-secret-file', keyFileVariable: 'SSH_KEY_FILE', usernameVariable: 'SSH_USER')
-                        ]) {
-                            sh """
-                                echo "Test de connectivité SSH vers ${env.SERVER_IP}..."
-                                ansible ${params.TARGET_SERVER} -i ${env.ANSIBLE_INVENTORY_PATH} \
-                                    -e ansible_ssh_private_key_file="\${SSH_KEY_FILE}" \
-                                    -m ping ${env.ANSIBLE_VERBOSE_FLAG}
-                            """
-                        }
-                    }
-                    
-                    if (isWindows) {
-                        withCredentials([
-                            usernamePassword(credentialsId: 'credentials-id-windows-user-password', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')
-                        ]) {
-                            sh """
-                                echo "Test de connectivité WinRM vers ${env.SERVER_IP}..."
-                                ansible ${params.TARGET_SERVER} -i ${env.ANSIBLE_INVENTORY_PATH} \
-                                    -e ansible_user="\${USERNAME}" \
-                                    -e ansible_password="\${PASSWORD}" \
-                                    -m win_ping ${env.ANSIBLE_VERBOSE_FLAG}
-                            """
-                        }
-                    }
-                    
-                    echo "✅ Connectivité OK vers ${params.TARGET_SERVER}"
-                }
-            }
-        }
-        
-        stage('Vérification Ansible') {
-            steps {
-                script {
-                    // Vérifier qu'Ansible est installé
-                    sh 'ansible --version'
-                    
-                    // Vérifier que le playbook existe
-                    sh """
-                        if [ ! -f "/tmp/ansibleJenkins/ansible/playbook/${env.SELECTED_PLAYBOOK}" ]; then
-                            echo "❌ Playbook ${env.SELECTED_PLAYBOOK} non trouvé!"
-                            echo "Contenu du répertoire playbook:"
-                            ls -la /tmp/ansibleJenkins/ansible/playbook/ || echo "Répertoire non trouvé"
-                            exit 1
-                        fi
-                        
-                        echo "✅ Playbook ${env.SELECTED_PLAYBOOK} trouvé"
-                    """
-                    
-                    // Vérifier la syntaxe du playbook
-                    sh "ansible-playbook --syntax-check -i ${env.ANSIBLE_INVENTORY_PATH} /tmp/ansibleJenkins/ansible/playbook/${SELECTED_PLAYBOOK} -e HOST=${TARGET_SERVER}"
                 }
             }
         }
@@ -214,6 +128,8 @@ pipeline {
         stage('Installation Docker') {
             steps {
                 script {
+                    echo "🐳 Installation Docker sur ${params.TARGET_SERVER} (${env.SERVER_IP})..."
+                    
                     def isLinux = env.SELECTED_PLAYBOOK.contains('_linux.yml')
                     def isWindows = env.SELECTED_PLAYBOOK.contains('_windows.yml')
 
@@ -221,17 +137,7 @@ pipeline {
                         withCredentials([
                             sshUserPrivateKey(credentialsId: 'ssh-key-ansible-user-secret-file', keyFileVariable: 'SSH_KEY_FILE', usernameVariable: 'SSH_USER')
                         ]) {
-                            echo "🐳 Démarrage de l'installation Docker sur Linux..."
-                            echo "Serveur: ${params.TARGET_SERVER} (${env.SERVER_IP}) - ${env.SERVER_TYPE}"
-                            echo "Playbook: ${env.SELECTED_PLAYBOOK}"
-                            echo "Verbosité: ${params.ANSIBLE_VERBOSITY} ${env.ANSIBLE_VERBOSE_FLAG}"
-                            
                             sh '''
-                                echo "Exécution du playbook d'installation Docker..."
-                                echo "Aucune variable spécifique - Installation standard"
-                                echo "Flag de verbosité: ${ANSIBLE_VERBOSE_FLAG}"
-                                
-                                # Commande Ansible simple pour installation Docker
                                 ansible-playbook -i ${ANSIBLE_INVENTORY_PATH} \
                                     /tmp/ansibleJenkins/ansible/playbook/${SELECTED_PLAYBOOK} \
                                     -e HOST=${TARGET_SERVER} \
@@ -245,17 +151,7 @@ pipeline {
                         withCredentials([
                             usernamePassword(credentialsId: 'credentials-id-windows-user-password', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')
                         ]) {
-                            echo "🐳 Démarrage de l'installation Docker sur Windows..."
-                            echo "Serveur: ${params.TARGET_SERVER} (${env.SERVER_IP}) - ${env.SERVER_TYPE}"
-                            echo "Playbook: ${env.SELECTED_PLAYBOOK}"
-                            echo "Verbosité: ${params.ANSIBLE_VERBOSITY} ${env.ANSIBLE_VERBOSE_FLAG}"
-                            
                             sh '''
-                                echo "Exécution du playbook d'installation Docker..."
-                                echo "Aucune variable spécifique - Installation standard"
-                                echo "Flag de verbosité: ${ANSIBLE_VERBOSE_FLAG}"
-                                
-                                # Commande Ansible simple pour installation Docker
                                 ansible-playbook -i ${ANSIBLE_INVENTORY_PATH} \
                                     /tmp/ansibleJenkins/ansible/playbook/${SELECTED_PLAYBOOK} \
                                     -e HOST=${TARGET_SERVER} \
@@ -271,186 +167,53 @@ pipeline {
     }
     
     post {
-        always {
-            echo "Installation Docker terminée"
-            
-            // Créer un rapport détaillé avec informations dynamiques
-            script {
-                def report = """
-                === RAPPORT INSTALLATION DOCKER (INVENTAIRE DYNAMIQUE) ===
-                Serveur Cible: ${params.TARGET_SERVER}
-                Adresse IP: ${env.SERVER_IP ?: 'Non détectée'}
-                Type Serveur: ${env.SERVER_TYPE ?: 'Non défini'}
-                Playbook: ${env.SELECTED_PLAYBOOK ?: 'Non défini'}
-                Inventaire: ${env.ANSIBLE_INVENTORY_PATH}
-                Build: #${env.BUILD_NUMBER}
-                Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
-                Statut: ${currentBuild.currentResult}
-                Durée: ${currentBuild.durationString ?: 'N/A'}
-                
-                Groupes disponibles dans l'inventaire:
-                ${getAnsibleGroups().join(', ')}
-                ==========================================================
-                """
-                writeFile file: 'docker_installation_report.txt', text: report
-                archiveArtifacts artifacts: 'docker_installation_report.txt', allowEmptyArchive: true
-            }
-        }
         success {
             script {
-                echo "Installation Docker sur '${params.TARGET_SERVER}' (${env.SERVER_IP}) réussie!"
-                
-                currentBuild.description = "Docker installé → ${params.TARGET_SERVER} (${env.SERVER_IP})"
-                
-                // Email de succès avec informations dynamiques
-                def emailBody = """
-                    🐳 INSTALLATION DOCKER - SUCCÈS
-
-                    Serveur: ${params.TARGET_SERVER}
-                    Adresse IP: ${env.SERVER_IP ?: 'Non détectée'}
-                    Type Serveur: ${env.SERVER_TYPE ?: 'Non défini'}
-                    Playbook: ${env.SELECTED_PLAYBOOK ?: 'Non défini'}
-                    Build: #${env.BUILD_NUMBER}
-                    Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
-                    Durée: ${currentBuild.durationString ?: 'N/A'}
-
-                    📊 Détails du build: ${env.BUILD_URL}
-
-                    Configuration détectée automatiquement:
-                    - Inventaire: ${env.ANSIBLE_INVENTORY_PATH}
-                    - Groupes disponibles: ${getAnsibleGroups().join(', ')}
-                    - Connectivité: Testée avec succès
-
-                    ✅ L'installation Docker s'est terminée avec succès.
-                    
-                    Prochaines étapes:
-                    - Docker est maintenant installé sur ${params.TARGET_SERVER} (${env.SERVER_IP})
-                    - Vous pouvez tester avec: docker --version
-                """
+                currentBuild.description = "✅ Docker installé sur ${params.TARGET_SERVER} (${env.SERVER_IP})"
                 
                 mail to: 'l.kieran95@gmail.com',
-                    subject: "[Jenkins] Installation Docker - ${params.TARGET_SERVER} - Succès",
-                    body: emailBody
+                    subject: "[Jenkins] Docker installé avec succès - ${params.TARGET_SERVER}",
+                    body: """
+                    🐳 INSTALLATION DOCKER - SUCCÈS
+                    
+                    Serveur: ${params.TARGET_SERVER} (sélectionné dynamiquement)
+                    IP: ${env.SERVER_IP}
+                    Type: ${env.SERVER_TYPE}
+                    
+                    ✅ Docker est maintenant installé et prêt à l'emploi !
+                    """
             }
         }
         failure {
             script {
-                echo "Échec de l'installation Docker sur '${params.TARGET_SERVER}' (${env.SERVER_IP})"
-                
-                currentBuild.description = "Installation Docker → ÉCHEC sur ${params.TARGET_SERVER} (${env.SERVER_IP})"
-                
-                // Email d'échec avec informations de diagnostic
-                def emailBody = """
-                    ❌ INSTALLATION DOCKER - ÉCHEC
-
-                    Serveur: ${params.TARGET_SERVER}
-                    Adresse IP: ${env.SERVER_IP ?: 'Non détectée'}
-                    Type Serveur: ${env.SERVER_TYPE ?: 'Non défini'}
-                    Playbook: ${env.SELECTED_PLAYBOOK ?: 'Non défini'}
-                    Build: #${env.BUILD_NUMBER}
-                    Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
-
-                    🔍 Logs d'erreur: ${env.BUILD_URL}console
-
-                    Diagnostic automatique:
-                    - Inventaire: ${env.ANSIBLE_INVENTORY_PATH}
-                    - Groupes détectés: ${getAnsibleGroups().join(', ')}
-
-                    ⚠️ Veuillez vérifier les logs pour plus de détails.
-                    
-                    Actions recommandées:
-                    - Vérifier la connectivité au serveur ${params.TARGET_SERVER} (${env.SERVER_IP})
-                    - Contrôler les permissions d'installation
-                    - Examiner les prérequis système
-                    - Vérifier que l'inventaire Ansible est à jour
-                """
+                currentBuild.description = "❌ Échec installation Docker - ${params.TARGET_SERVER}"
                 
                 mail to: 'l.kieran95@gmail.com',
-                    subject: "[Jenkins] Installation Docker - Échec - ${params.TARGET_SERVER}",
-                    body: emailBody
+                    subject: "[Jenkins] Échec installation Docker - ${params.TARGET_SERVER}",
+                    body: "❌ L'installation Docker a échoué sur ${params.TARGET_SERVER}. Consultez les logs: ${env.BUILD_URL}console"
             }
-        }
-        cleanup {
-            cleanWs()
         }
     }
 }
 
-// ===============================================
-// FONCTIONS UTILITAIRES POUR INVENTAIRE DYNAMIQUE
-// ===============================================
-
 /**
- * Parse le fichier d'inventaire Ansible et retourne la liste des groupes
- * DOIT être appelé dans un contexte Jenkins (node/stage)
- */
-def getAnsibleGroups() {
-    def inventoryPath = '/tmp/ansibleJenkins/ansible/inventory/hosts.ini'
-    
-    // Vérifier que le fichier existe
-    if (!fileExists(inventoryPath)) {
-        error("❌ Fichier d'inventaire Ansible non trouvé à: ${inventoryPath}")
-    }
-    
-    def inventoryContent = readFile(inventoryPath)
-    def groups = []
-    
-    // Parser le contenu ligne par ligne
-    inventoryContent.split('\n').each { line ->
-        line = line.trim()
-        
-        // Détecter les groupes [nom_groupe]
-        if (line.startsWith('[') && line.endsWith(']')) {
-            def groupName = line[1..-2] // Enlever les crochets
-            
-            // Exclure les méta-groupes (avec :children)
-            if (!groupName.contains(':children')) {
-                groups.add(groupName)
-            }
-        }
-    }
-    
-    // Trier alphabétiquement
-    groups = groups.sort()
-    
-    echo "📋 Groupes détectés dans l'inventaire: ${groups.join(', ')}"
-    return groups
-}
-
-/**
- * Retourne les informations d'un serveur (type et IP) à partir de l'inventaire
- * DOIT être appelé dans un contexte Jenkins (node/stage)
+ * Fonction utilitaire pour récupérer les infos serveur
  */
 def getServerInfo(String serverName) {
     def inventoryPath = '/tmp/ansibleJenkins/ansible/inventory/hosts.ini'
-    
-    if (!fileExists(inventoryPath)) {
-        error("❌ Fichier d'inventaire Ansible non trouvé à: ${inventoryPath}")
-    }
-    
     def inventoryContent = readFile(inventoryPath)
     def currentGroup = ''
     def serverIp = 'Unknown'
     def serverType = 'Linux' // Par défaut
     
-    // Parser le contenu pour trouver le serveur
     inventoryContent.split('\n').each { line ->
         line = line.trim()
         
-        // Détecter les groupes
         if (line.startsWith('[') && line.endsWith(']')) {
-            currentGroup = line[1..-2] // Enlever les crochets
-            
-            // Déterminer le type selon le nom du groupe
-            if (currentGroup.toLowerCase().contains('windows')) {
-                serverType = 'Windows'
-            } else {
-                serverType = 'Linux'
-            }
+            currentGroup = line[1..-2]
+            serverType = currentGroup.toLowerCase().contains('windows') ? 'Windows' : 'Linux'
         }
-        // Si on est dans le bon groupe et qu'on trouve une IP
         else if (currentGroup == serverName && line.contains('.')) {
-            // Extraire l'IP (supposant format: IP ou hostname ansible_host=IP)
             if (line.contains('ansible_host=')) {
                 serverIp = line.split('ansible_host=')[1].split(' ')[0]
             } else if (line ==~ /^\d+\.\d+\.\d+\.\d+.*/) {

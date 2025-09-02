@@ -65,7 +65,7 @@ pipeline {
                     env.SERVER_TYPE = serverType
                     
                     // Déterminer le playbook selon le type de serveur
-                    def selectedPlaybook = isWindows ? 'install_docker_windows.yml' : 'install_docker_linux.yml'
+                    def selectedPlaybook = isWindows ? 'deploy_docker_windows.yml' : 'deploy_docker_linux.yml'
                     env.SELECTED_PLAYBOOK = selectedPlaybook
                     echo "Playbook sélectionné: ${env.SELECTED_PLAYBOOK}"
                     
