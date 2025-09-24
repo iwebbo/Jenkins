@@ -74,7 +74,7 @@ pipeline {
         stage('Deploy with Ansible') {
             steps {
                 script {
-                    withCredentials([file(credentialsId: 'ssh-key-ansible-user-secret-file', variable: 'SSH_PRIVATE_KEY_FILE')]) {
+                    withCredentials([sshUserPrivateKey(credentialsId: 'ssh-key-ansible-user-secret-file', keyFileVariable: 'SSH_KEY_FILE', usernameVariable: 'SSH_USER')]) {
                         sh """
                             ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini /tmp/ansibleJenkins/ansible/playbook/${SELECTED_PLAYBOOK} \\
                                 -e "HOST=${TARGET_SERVER}" \\
@@ -95,7 +95,7 @@ pipeline {
             }
             steps {
                 script {
-                    withCredentials([file(credentialsId: 'ssh-key-ansible-user-secret-file', variable: 'SSH_PRIVATE_KEY_FILE')]) {
+                    withCredentials([sshUserPrivateKey(credentialsId: 'ssh-key-ansible-user-secret-file', keyFileVariable: 'SSH_KEY_FILE', usernameVariable: 'SSH_USER')]) {
                         sh """
                             ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini /tmp/ansibleJenkins/ansible/playbook/${SELECTED_PLAYBOOK} \\
                                 -e "action=status" \\

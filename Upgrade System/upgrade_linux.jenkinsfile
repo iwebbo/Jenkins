@@ -46,22 +46,37 @@ pipeline {
         stage('Validation des paramètres') {
             steps {
                 script {
-                    // Gestion automatique pour les builds programmés
-                    if (env.BUILD_CAUSE == 'TIMERTRIGGER') {
+                    // Vérification si le build est déclenché par le trigger cron
+                    def isCronTriggered = false
+                    def triggerType = 'Manuel'
+                    
+                    // Méthode plus fiable pour détecter un trigger cron
+                    if (currentBuild.getBuildCauses('hudson.triggers.TimerTrigger$TimerTriggerCause').size() > 0) {
+                        isCronTriggered = true
+                        triggerType = 'Automatique (Cron 4h)'
+                    }
+                    
+                    // Gestion des paramètres selon le type de déclenchement
+                    if (isCronTriggered) {
                         echo "🕐 Exécution automatique programmée à 4h du matin"
                         // Valeurs par défaut pour l'exécution automatique
                         env.TARGET_SERVER = 'Linux'
                         env.ANSIBLE_VERBOSITY = '1'
                     } else {
                         echo "🖱️ Exécution manuelle avec paramètres utilisateur"
-                        env.TARGET_SERVER = params.TARGET_SERVER
-                        env.ANSIBLE_VERBOSITY = params.ANSIBLE_VERBOSITY
+                        env.TARGET_SERVER = params.TARGET_SERVER ?: 'Linux'
+                        env.ANSIBLE_VERBOSITY = params.ANSIBLE_VERBOSITY ?: '1'
                     }
+                    
+                    // Stocker le type de trigger pour utilisation ultérieure
+                    env.TRIGGER_TYPE = triggerType
+                    env.IS_CRON_TRIGGERED = isCronTriggered.toString()
                     
                     echo "🔍 Validation des paramètres de mise à jour système..."
                     echo "Serveur cible: ${env.TARGET_SERVER}"
                     echo "Verbosité Ansible: ${env.ANSIBLE_VERBOSITY}"
-                    echo "Type de déclenchement: ${env.BUILD_CAUSE ?: 'Manuel'}"
+                    echo "Type de déclenchement: ${triggerType}"
+                    echo "Build déclenché par cron: ${isCronTriggered}"
                     
                     // Déterminer le flag de verbosité
                     def verbosityFlag = ''
@@ -115,12 +130,11 @@ pipeline {
             
             // Créer un rapport détaillé
             script {
-                def triggerType = env.BUILD_CAUSE == 'TIMERTRIGGER' ? 'Automatique (Cron 4h)' : 'Manuel'
                 def report = """
                 === RAPPORT DE MISE À JOUR SYSTÈME ===
                 Serveur Cible: ${env.TARGET_SERVER}
                 Verbosité Ansible: ${env.ANSIBLE_VERBOSITY}
-                Type de déclenchement: ${triggerType}
+                Type de déclenchement: ${env.TRIGGER_TYPE}
                 Playbook: update_system_linux.yml
                 Inventaire: /tmp/ansibleJenkins/ansible/inventory/hosts.ini
                 Build: #${env.BUILD_NUMBER}
@@ -135,10 +149,9 @@ pipeline {
         }
         success {
             script {
-                def triggerType = env.BUILD_CAUSE == 'TIMERTRIGGER' ? 'Automatique (Cron 4h)' : 'Manuel'
                 echo "Mise à jour système réussie sur '${env.TARGET_SERVER}'"
                 
-                currentBuild.description = "Mise à jour système → ${env.TARGET_SERVER} (${triggerType})"
+                currentBuild.description = "Mise à jour système → ${env.TARGET_SERVER} (${env.TRIGGER_TYPE})"
                 
                 // Créer le corps de l'email en texte avec formatage
                 def emailBody = """
@@ -146,7 +159,7 @@ pipeline {
 
                     Serveur: ${env.TARGET_SERVER}
                     Verbosité Ansible: ${env.ANSIBLE_VERBOSITY}
-                    Type de déclenchement: ${triggerType}
+                    Type de déclenchement: ${env.TRIGGER_TYPE}
                     Playbook: update_system_linux.yml
                     Build: #${env.BUILD_NUMBER}
                     Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
@@ -158,13 +171,13 @@ pipeline {
                     - Inventaire: /tmp/ansibleJenkins/ansible/inventory/hosts.ini
                     - Type d'opération: Mise à jour système complète
                     - Flag de verbosité: ${env.ANSIBLE_VERBOSE_FLAG ?: 'Aucun'}
-                    - Déclenchement: ${triggerType}
+                    - Déclenchement: ${env.TRIGGER_TYPE}
 
                     ✅ La mise à jour système s'est terminée avec succès.
                 """
                 
                 // Sujet différent selon le type de déclenchement
-                def subjectPrefix = env.BUILD_CAUSE == 'TIMERTRIGGER' ? '[Auto-4h]' : '[Manuel]'
+                def subjectPrefix = env.IS_CRON_TRIGGERED == 'true' ? '[Auto-4h]' : '[Manuel]'
                 
                 mail to: 'l.kieran95@gmail.com',
                     subject: "${subjectPrefix} [Jenkins] Mise à jour système - ${env.TARGET_SERVER} - Succès",
@@ -173,10 +186,9 @@ pipeline {
         }
         failure {
             script {
-                def triggerType = env.BUILD_CAUSE == 'TIMERTRIGGER' ? 'Automatique (Cron 4h)' : 'Manuel'
                 echo "Échec de la mise à jour système sur '${env.TARGET_SERVER}'"
                 
-                currentBuild.description = "Mise à jour système → ÉCHEC (${triggerType})"
+                currentBuild.description = "Mise à jour système → ÉCHEC (${env.TRIGGER_TYPE})"
                 
                 // Créer le corps de l'email d'échec
                 def emailBody = """
@@ -184,7 +196,7 @@ pipeline {
 
                     Serveur: ${env.TARGET_SERVER}
                     Verbosité Ansible: ${env.ANSIBLE_VERBOSITY}
-                    Type de déclenchement: ${triggerType}
+                    Type de déclenchement: ${env.TRIGGER_TYPE}
                     Playbook: update_system_linux.yml
                     Build: #${env.BUILD_NUMBER}
                     Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
@@ -195,15 +207,15 @@ pipeline {
                     - Inventaire: /tmp/ansibleJenkins/ansible/inventory/hosts.ini
                     - Type d'opération: Mise à jour système complète
                     - Flag de verbosité: ${env.ANSIBLE_VERBOSE_FLAG ?: 'Aucun'}
-                    - Déclenchement: ${triggerType}
+                    - Déclenchement: ${env.TRIGGER_TYPE}
 
                     ⚠️ Veuillez vérifier les logs pour plus de détails.
                     
-                    ${env.BUILD_CAUSE == 'TIMERTRIGGER' ? '🕐 Build automatique de 4h du matin' : ''}
+                    ${env.IS_CRON_TRIGGERED == 'true' ? '🕐 Build automatique de 4h du matin' : ''}
                 """
                 
                 // Sujet différent selon le type de déclenchement
-                def subjectPrefix = env.BUILD_CAUSE == 'TIMERTRIGGER' ? '[Auto-4h]' : '[Manuel]'
+                def subjectPrefix = env.IS_CRON_TRIGGERED == 'true' ? '[Auto-4h]' : '[Manuel]'
                 
                 mail to: 'l.kieran95@gmail.com',
                     subject: "${subjectPrefix} [Jenkins] Mise à jour système - Échec - ${env.TARGET_SERVER}",
