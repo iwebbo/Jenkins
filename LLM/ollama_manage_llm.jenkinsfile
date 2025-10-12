@@ -160,7 +160,7 @@ pipeline {
         stage('Ollama Models Management') {
             steps {
                 script {
-                    withCredentials([file(credentialsId: 'ssh-key-ansible-user-secret-file', variable: 'SSH_PRIVATE_KEY_FILE')]) {
+                    withCredentials([sshUserPrivateKey(credentialsId: 'ssh-key-ansible-user-secret-file', keyFileVariable: 'SSH_KEY_FILE', usernameVariable: 'SSH_USER')]) {
                         echo "🚀 Starting Ollama Models ${env.OPERATION_TYPE}..."
                         echo "Target Server: ${params.TARGET_SERVER}"
                         echo "Models Count: ${env.MODELS_COUNT}"
@@ -176,7 +176,7 @@ pipeline {
                             # Build ansible command with required variables
                             ANSIBLE_CMD="ansible-playbook -i /tmp/ansibleJenkins/ansible/inventory/hosts.ini \\
                                 /tmp/ansibleJenkins/ansible/playbook/${SELECTED_PLAYBOOK} \\
-                                -e host=${TARGET_SERVER} \\
+                                -e HOST=${TARGET_SERVER} \\
                                 -e operation_type=${OPERATION_TYPE} \\
                                 -e 'ollama_models=[${modelsJson}]' \\
                                 -e force_pull=${FORCE_PULL} \\
