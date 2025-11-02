@@ -1,0 +1,89 @@
+pipeline {
+    agent { label 'devops-agent' }
+
+    environment {
+        EMAIL_RECIPIENT = 'l.kieran95@gmail.com'
+    }
+
+    parameters {
+        choice(
+            name: 'ENV',
+            choices: ['dev', 'prd'],
+            description: 'Environment for Terraform'
+        )
+        choice(
+            name: 'ACTION',
+            choices: ['plan', 'apply', 'destroy'],
+            description: 'Terraform action'
+        )
+        string(
+            name: 'TF_VAR_EXTRA',
+            defaultValue: '',
+            description: 'Extra Terraform variables (key=value)'
+        )
+    }
+
+    stages {
+        stage('Checkout SCM') {
+            steps {
+                checkout scm
+                sh 'echo "Repo synced"'
+            }
+        }
+
+        stage('Terraform Init') {
+            steps {
+                sh "terraform -chdir=env/${params.ENV} init -backend-config=backend.hcl"
+            }
+        }
+
+        stage('Terraform Plan') {
+            when {
+                anyOf {
+                    expression { params.ACTION == 'plan' }
+                    expression { params.ACTION == 'apply' }
+                    expression { params.ACTION == 'destroy' }
+                }
+            }
+            steps {
+                script {
+                    def extraVars = params.TF_VAR_EXTRA ? "-var '${params.TF_VAR_EXTRA}'" : ''
+                    def varFiles = "-var-file=terraform.tfvars -var-file=secrets.tfvars"
+                    sh """
+                        terraform -chdir=env/${params.ENV} plan ${varFiles} ${extraVars} -out=tfplan
+                    """
+                }
+            }
+        }
+
+        stage('Terraform Apply or Destroy') {
+            when {
+                anyOf {
+                    expression { params.ACTION == 'apply' }
+                    expression { params.ACTION == 'destroy' }
+                }
+            }
+            steps {
+                sh """
+                    terraform -chdir=env/${params.ENV} ${params.ACTION} -auto-approve tfplan
+                """
+            }
+        }
+    }
+
+    post {
+        success {
+            mail to: env.EMAIL_RECIPIENT,
+                 subject: "[Jenkins] Terraform ${params.ACTION} on ${params.ENV} - SUCCESS",
+                 body: "Terraform ${params.ACTION} succeeded on environment ${params.ENV}.\nBuild: #${env.BUILD_NUMBER}\nDate: ${new Date().format('yyyy-MM-dd HH:mm:ss')}\nDetails: ${env.BUILD_URL}"
+        }
+        failure {
+            mail to: env.EMAIL_RECIPIENT,
+                 subject: "[Jenkins] Terraform ${params.ACTION} on ${params.ENV} - FAILURE",
+                 body: "Terraform ${params.ACTION} failed on environment ${params.ENV}.\nBuild: #${env.BUILD_NUMBER}\nDate: ${new Date().format('yyyy-MM-dd HH:mm:ss')}\nLogs: ${env.BUILD_URL}console"
+        }
+        cleanup {
+            cleanWs()
+        }
+    }
+}
