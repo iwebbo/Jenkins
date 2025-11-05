@@ -1,0 +1,385 @@
+pipeline {
+    agent { label 'generic-agent' }
+
+    environment {
+        ANSIBLE_HOST_KEY_CHECKING = 'False'
+        ANSIBLE_FORKS = '2'
+        ANSIBLE_CONFIG = "${WORKSPACE}/ansible.cfg"
+        ANSIBLE_INVENTORY = "${WORKSPACE}/inventory/hosts.ini"
+        PLAYBOOK_PATH = "${WORKSPACE}/playbook/build_docker_project.yml"
+        EMAIL_RECIPIENT = 'ci-notify@example.com'
+    }
+
+    parameters {
+        choice(
+            name: 'TARGET_SERVER',
+            choices: [
+                'Windows',
+                'HomeAutomation',
+                'ObjectStorage',
+                'InfrastructureTerraform',
+                'K8sWorkerNode',
+                'K8sMasterNode',
+                'AuthService',
+                'DevVM01',
+                'GitServer'
+            ],
+            description: 'Target server for Docker project build'
+        )
+        choice(
+            name: 'ACTION',
+            choices: [
+                'build',
+                'build_push_objectstorage',
+                'start',
+                'stop',
+                'down',
+                'restart',
+                'status'
+            ],
+            description: 'Action to perform on Docker project'
+        )
+        string(
+            name: 'REPO_GIT',
+            defaultValue: '',
+            description: '(e.g., http://git.example.com/repo.git/)'
+        )
+        string(
+            name: 'BUILD_VERSION',
+            defaultValue: '',
+            description: '(e.g., v1.0.0)'
+        )
+        string(
+            name: 'PROJECT_PATH',
+            defaultValue: '',
+            description: 'Path to Docker project folder (e.g., /opt/projects/docker)'
+        )
+        string(
+            name: 'PROJECT_NAME',
+            defaultValue: 'docker_project',
+            description: 'Docker project name'
+        )
+        string(
+            name: 'MINIO_URL',
+            defaultValue: 'http://objectstorage.local:9000',
+            description: 'Object storage server URL (e.g., http://objectstorage.local:9000)'
+        )
+        string(
+            name: 'MINIO_ALIAS',
+            defaultValue: 'local',
+            description: 'Object storage alias (e.g., mc alias set local ~/.mc/config.json)'
+        )
+        string(
+            name: 'MINIO_BUCKET',
+            defaultValue: 'docker_bucket',
+            description: 'Object storage bucket name'
+        )
+        booleanParam(
+            name: 'FORCE_REBUILD',
+            defaultValue: false,
+            description: 'Force rebuild of Docker images'
+        )
+        booleanParam(
+            name: 'REMOVE_VOLUMES',
+            defaultValue: false,
+            description: 'Remove volumes (for down action)'
+        )
+        choice(
+            name: 'ANSIBLE_VERBOSITY',
+            choices: ['0', '1', '2', '3', '4'],
+            description: '''Ansible verbosity level:
+            0 = Normal (default)
+            1 = Verbose (-v)
+            2 = More verbose (-vv)
+            3 = Debug (-vvv)
+            4 = Full debug (-vvvv)'''
+        )
+        text(
+            name: 'EXTRA_VARS',
+            defaultValue: '',
+            description: 'Additional Ansible variables (format: key=value separated by spaces)'
+        )
+    }
+
+    stages {
+        stage('Checkout SCM') {
+            steps {
+                script {
+                    checkout scm
+                    sh '''
+                        echo "Workspace cloned"
+                    '''
+                }
+            }
+        }
+
+        stage('Parameters Verification') {
+            steps {
+                script {
+                    echo "=== Parameters Validation ==="
+                    echo "Target server: ${params.TARGET_SERVER}"
+                    echo "Docker action: ${params.ACTION}"
+                    echo "Project name: ${params.PROJECT_NAME}"
+                    echo "Build Version: ${params.BUILD_VERSION}"
+                    echo "GIT Repo: ${params.REPO_GIT}"
+                    echo "Project path: ${params.PROJECT_PATH}"
+                    echo "Force rebuild: ${params.FORCE_REBUILD}"
+                    echo "Remove volumes: ${params.REMOVE_VOLUMES}"
+                    echo "Verbosity: ${params.ANSIBLE_VERBOSITY}"
+
+                    def verbosityFlag = ''
+                    if (params.ANSIBLE_VERBOSITY != '0') {
+                        verbosityFlag = '-' + 'v' * params.ANSIBLE_VERBOSITY.toInteger()
+                    }
+                    env.ANSIBLE_VERBOSE_FLAG = verbosityFlag
+                    echo "Verbosity flag: '${env.ANSIBLE_VERBOSE_FLAG ?: 'None'}'"
+
+                    sh 'ansible --version'
+                }
+            }
+        }
+
+        stage('Ansible Variables Preparation') {
+            steps {
+                script {
+                    def ansibleVars = [
+                        "HOST='${params.TARGET_SERVER}'",
+                        "docker_action='${params.ACTION}'",
+                        "project_path='${params.PROJECT_PATH}'",
+                        "project_name='${params.PROJECT_NAME}'",
+                        "repo_git='${params.REPO_GIT}'",
+                        "build_version='${params.BUILD_VERSION}'",
+                        "rebuild='${params.FORCE_REBUILD}'",
+                        "clean_volumes='${params.REMOVE_VOLUMES}'"
+                    ]
+
+                    if (params.EXTRA_VARS?.trim()) {
+                        ansibleVars << params.EXTRA_VARS.trim()
+                    }
+
+                    env.ANSIBLE_EXTRA_VARS = ansibleVars.join(' ')
+
+                    echo "Ansible variables prepared:"
+                    echo "  - HOST: ${params.TARGET_SERVER}"
+                    echo "  - docker_action: ${params.ACTION}"
+                    echo "  - project_path: ${params.PROJECT_PATH}"
+                    echo "  - project_name: ${params.PROJECT_NAME}"
+                    echo "  - rebuild: ${params.FORCE_REBUILD}"
+                    echo "  - clean_volumes: ${params.REMOVE_VOLUMES}"
+                    if (params.EXTRA_VARS?.trim()) {
+                        echo "  - Extra variables: ${params.EXTRA_VARS}"
+                    }
+                    echo "Complete variables: ${env.ANSIBLE_EXTRA_VARS}"
+                }
+            }
+        }
+
+        stage('Docker Project Deployment') {
+            steps {
+                script {
+                    echo "=== Execution: ${params.ACTION} on ${params.PROJECT_NAME} @ ${params.TARGET_SERVER} ==="
+
+                    withCredentials([
+                        sshUserPrivateKey(
+                            credentialsId: 'ssh-key-secret-id',
+                            keyFileVariable: 'SSH_KEY_FILE',
+                            usernameVariable: 'SSH_USER'
+                        ),
+                        usernamePassword(
+                            credentialsId: "OBJECTSTORAGE_CREDENTIALS_ID",
+                            usernameVariable: 'OBJECT_ACCESS_KEY',
+                            passwordVariable: 'OBJECT_SECRET_KEY'
+                        )
+                    ]) {
+                        sh """
+                            ansible-playbook \
+                                -i ${ANSIBLE_INVENTORY} \
+                                -e ansible_ssh_private_key_file="\${SSH_KEY_FILE}" \
+                                -e object_access_key="\${OBJECT_ACCESS_KEY}" \
+                                -e object_secret_key="\${OBJECT_SECRET_KEY}" \
+                                -e object_host="${params.MINIO_URL}" \
+                                -e object_alias="${params.MINIO_ALIAS}" \
+                                -e object_bucket="${params.MINIO_BUCKET}"  \
+                                -e "${ANSIBLE_EXTRA_VARS}" \
+                                ${ANSIBLE_VERBOSE_FLAG} \
+                                ${PLAYBOOK_PATH}
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Verify Deployment') {
+            when {
+                expression { params.ACTION in ['build', 'start', 'restart'] }
+            }
+            steps {
+                script {
+                    echo "=== Verifying deployment status ==="
+
+                    withCredentials([
+                        sshUserPrivateKey(
+                            credentialsId: 'ssh-key-secret-id',
+                            keyFileVariable: 'SSH_KEY_FILE',
+                            usernameVariable: 'SSH_USER'
+                        )
+                    ]) {
+                        sh """
+                            ansible-playbook \
+                                -i ${ANSIBLE_INVENTORY} \
+                                -e ansible_ssh_private_key_file="\${SSH_KEY_FILE}" \
+                                -e "HOST='${params.TARGET_SERVER}'" \
+                                -e "docker_action='status'" \
+                                -e "project_path='${params.PROJECT_PATH}'" \
+                                -e "project_name='${params.PROJECT_NAME}'" \
+                                ${ANSIBLE_VERBOSE_FLAG} \
+                                ${PLAYBOOK_PATH}
+                        """
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+                def report = """
+                === DOCKER PROJECT MANAGEMENT REPORT ===
+                Project Name: ${params.PROJECT_NAME}
+                Project Path: ${params.PROJECT_PATH}
+                Target Server: ${params.TARGET_SERVER}
+                Action Performed: ${params.ACTION}
+                Force Rebuild: ${params.FORCE_REBUILD}
+                Remove Volumes: ${params.REMOVE_VOLUMES}
+                Verbosity: ${params.ANSIBLE_VERBOSITY}
+                Extra Variables: ${params.EXTRA_VARS ?: 'None'}
+                Build: #${env.BUILD_NUMBER}
+                Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+                Status: ${currentBuild.currentResult}
+                Duration: ${currentBuild.durationString ?: 'N/A'}
+                Workspace: ${env.WORKSPACE}
+                =========================================
+                """
+                writeFile file: 'docker_project_report.txt', text: report
+                archiveArtifacts artifacts: 'docker_project_report.txt', allowEmptyArchive: true
+
+                try {
+                    archiveArtifacts artifacts: '**/*.log', allowEmptyArchive: true, fingerprint: true
+                } catch (Exception e) {
+                    echo "No log files to archive: ${e.getMessage()}"
+                }
+            }
+        }
+
+        success {
+            script {
+                echo "✓ Docker project management successful!"
+                currentBuild.description = "✓ Docker ${params.ACTION} → ${params.PROJECT_NAME}@${params.TARGET_SERVER}"
+
+                def emailBody = """
+                🐳 DOCKER PROJECT MANAGEMENT - SUCCESS
+
+                Project: ${params.PROJECT_NAME}
+                Action: ${params.ACTION.toUpperCase()}
+                Target Server: ${params.TARGET_SERVER}
+                Project Path: ${params.PROJECT_PATH}
+                Verbosity: ${params.ANSIBLE_VERBOSITY}
+                Build: #${env.BUILD_NUMBER}
+                Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+                Duration: ${currentBuild.durationString ?: 'N/A'}
+
+                Details: ${env.BUILD_URL}
+
+                Configuration used:
+                - Force Rebuild: ${params.FORCE_REBUILD}
+                - Remove Volumes: ${params.REMOVE_VOLUMES}
+
+                ${params.ACTION in ['start', 'restart'] ? """
+                🌐 Estimated Access URLs:
+                - Frontend: http://${params.TARGET_SERVER}:80/
+                - Backend API: http://${params.TARGET_SERVER}:8000/
+                - API Documentation: http://${params.TARGET_SERVER}:8000/docs
+                - Database: ${params.TARGET_SERVER}:5432
+                """ : ''}
+
+                ✓ The action '${params.ACTION}' was successfully executed on Docker project '${params.PROJECT_NAME}'.
+                """
+
+                mail to: "${env.EMAIL_RECIPIENT}",
+                    subject: "[Jenkins] ✓ Docker ${params.ACTION} - ${params.PROJECT_NAME}@${params.TARGET_SERVER} - Success",
+                    body: emailBody
+            }
+        }
+
+        failure {
+            script {
+                echo "✗ Docker project management failed"
+                currentBuild.description = "✗ Docker ${params.ACTION} → FAILURE"
+                
+                def emailBody = """
+                ❌ DOCKER PROJECT MANAGEMENT - FAILURE
+
+                Project: ${params.PROJECT_NAME}
+                Action: ${params.ACTION.toUpperCase()}
+                Target Server: ${params.TARGET_SERVER}
+                Project Path: ${params.PROJECT_PATH}
+                Verbosity: ${params.ANSIBLE_VERBOSITY}
+                Build: #${env.BUILD_NUMBER}
+                Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+
+                Error logs: ${env.BUILD_URL}console
+
+                Generated Ansible variables:
+                ${env.ANSIBLE_EXTRA_VARS ?: 'Not generated'}
+
+                📋 Troubleshooting checklist:
+                1. Check if Docker is running on target server
+                2. Verify project path exists: ${params.PROJECT_PATH}
+                3. Check docker-compose.yml syntax
+                4. Verify network connectivity to target server
+                5. Check available disk space and memory
+                6. Verify SSH credentials and connectivity
+                7. Check Ansible playbook syntax
+
+                Please check the logs for more details.
+                """
+                
+                mail to: "${env.EMAIL_RECIPIENT}",
+                    subject: "[Jenkins] ✗ FAILURE - Docker ${params.ACTION} - ${params.PROJECT_NAME}@${params.TARGET_SERVER}",
+                    body: emailBody
+            }
+        }
+        
+        unstable {
+            script {
+                echo "⚠ Docker project completed with warnings"
+                currentBuild.description = "⚠ Docker ${params.ACTION} → UNSTABLE"
+                
+                def emailBody = """
+                ⚠ DOCKER PROJECT MANAGEMENT - UNSTABLE
+
+                Project: ${params.PROJECT_NAME}
+                Action: ${params.ACTION.toUpperCase()}
+                Target Server: ${params.TARGET_SERVER}
+                Build: #${env.BUILD_NUMBER}
+                Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+
+                The build completed but with warnings. Please review the logs.
+
+                Warning logs: ${env.BUILD_URL}console
+
+                Generated Ansible variables:
+                ${env.ANSIBLE_EXTRA_VARS ?: 'Not generated'}
+                """
+                
+                mail to: "${env.EMAIL_RECIPIENT}",
+                    subject: "[Jenkins] ⚠ Docker ${params.ACTION} - ${params.PROJECT_NAME}@${params.TARGET_SERVER} - UNSTABLE",
+                    body: emailBody
+            }
+        }
+        
+        cleanup {
+            cleanWs()
+        }
+    }
