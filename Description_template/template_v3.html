@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kubernetes Helm Deployment</title>
+</head>
+<body style="font-family: Arial, sans-serif; font-size: 13px; line-height: 1.4;">
+
+<div style="max-width: 900px; margin: 0 auto; padding: 20px;">
+    <h1 style="color: #2c3e50; margin: 0 0 5px 0; font-size: 24px;">🚀 Kubernetes Helm Deployment</h1>
+    <p style="color: #7f8c8d; margin: 0 0 20px 0; font-style: italic;">Automatisation du déploiement Helm Chart sur cluster Kubernetes avec Ansible</p>
+    
+    <div style="background: #f8f9fa; padding: 15px; border-left: 4px solid #3498db; margin: 20px 0;">
+        <h3 style="margin: 0 0 10px 0; color: #2c3e50; font-size: 15px;">⚡ Fonctionnalités principales</h3>
+        <ul style="margin: 0; padding-left: 20px;">
+            <li><strong>Déploiement Helm Chart</strong> - Installation et mise à jour des releases Kubernetes</li>
+            <li><strong>Multi-serveurs</strong> - Windows, HomeAssistant, MinIO, Terraform, K8s_worker, K8s_master, Keycloak, vm-debian-dev-01, GIT</li>
+            <li><strong>Gestion Helm avancée</strong> - Repository, chart, namespace et release configurables</li>
+            <li><strong>Ingress optionnel</strong> - Configuration Ingress NGINX intégrée</li>
+            <li><strong>Gestion d'utilisateurs</strong> - Génération de tokens Kubernetes</li>
+            <li><strong>Orchestration Ansible</strong> - Playbook avec verbosité configurable</li>
+            <li><strong>Clonage Git</strong> - Support de dépôts Git pour configuration</li>
+            <li><strong>Reporting & Alertes</strong> - Rapport de déploiement et notifications email</li>
+        </ul>
+    </div>
+    
+    <div style="background: #f8f9fa; padding: 15px; border-left: 4px solid #e67e22; margin: 20px 0;">
+        <h3 style="margin: 0 0 10px 0; color: #2c3e50; font-size: 15px;">⚙️ Paramètres principaux</h3>
+        
+        <div style="margin: 8px 0; padding: 8px; background: white; border-radius: 3px;">
+            <strong>TARGET_SERVER</strong> <span style="background: #e74c3c; color: white; padding: 2px 6px; border-radius: 3px; font-size: 11px;">REQUIS</span><br>
+            <span style="color: #7f8c8d; font-size: 12px;">Serveur cible: Windows, HomeAssistant, MinIO, Terraform, K8s_worker, K8s_master, Keycloak, vm-debian-dev-01, GIT</span>
+        </div>
+        <div style="margin: 8px 0; padding: 8px; background: white; border-radius: 3px;">
+            <strong>HELM_REPO_NAME</strong> <span style="background: #95a5a6; color: white; padding: 2px 6px; border-radius: 3px; font-size: 11px;">OPTIONNEL</span><br>
+            <span style="color: #7f8c8d; font-size: 12px;">Default: kubernetes-dashboard</span>
+        </div>
+        <div style="margin: 8px 0; padding: 8px; background: white; border-radius: 3px;">
+            <strong>HELM_REPO_URL</strong> <span style="background: #95a5a6; color: white; padding: 2px 6px; border-radius: 3px; font-size: 11px;">OPTIONNEL</span><br>
+            <span style="color: #7f8c8d; font-size: 12px;">Default: https://[HELM_REPO_URL]/</span>
+        </div>
+        <div style="margin: 8px 0; padding: 8px; background: white; border-radius: 3px;">
+            <strong>CHART_NAME</strong> <span style="background: #95a5a6; color: white; padding: 2px 6px; border-radius: 3px; font-size: 11px;">OPTIONNEL</span><br>
+            <span style="color: #7f8c8d; font-size: 12px;">Default: kubernetes-dashboard</span>
+        </div>
+        <div style="margin: 8px 0; padding: 8px; background: white; border-radius: 3px;">
+            <strong>NAMESPACE</strong> <span style="background: #95a5a6; color: white; padding: 2px 6px; border-radius: 3px; font-size: 11px;">OPTIONNEL</span><br>
+            <span style="color: #7f8c8d; font-size: 12px;">Default: kubernetes-dashboard</span>
+        </div>
+        <div style="margin: 8px 0; padding: 8px; background: white; border-radius: 3px;">
+            <strong>RELEASE_NAME</strong> <span style="background: #95a5a6; color: white; padding: 2px 6px; border-radius: 3px; font-size: 11px;">OPTIONNEL</span><br>
+            <span style="color: #7f8c8d; font-size: 12px;">Default: kubernetes-dashboard</span>
+        </div>
+        <div style="margin: 8px 0; padding: 8px; background: white; border-radius: 3px;">
+            <strong>FILES_ENABLED</strong> <span style="background: #3498db; color: white; padding: 2px 6px; border-radius: 3px; font-size: 11px;">BOOLÉEN</span><br>
+            <span style="color: #7f8c8d; font-size: 12px;">Activer fichier values.yml | Default: true</span>
+        </div>
+        <div style="margin: 8px 0; padding: 8px; background: white; border-radius: 3px;">
+            <strong>VALUES_FILE</strong> <span style="background: #95a5a6; color: white; padding: 2px 6px; border-radius: 3px; font-size: 11px;">OPTIONNEL</span><br>
+            <span style="color: #7f8c8d; font-size: 12px;">Fichier YAML valeurs | Default: dashboard-values.yaml</span>
+        </div>
+        <div style="margin: 8px 0; padding: 8px; background: white; border-radius: 3px;">
+            <strong>INGRESS_ENABLED</strong> <span style="background: #3498db; color: white; padding: 2px 6px; border-radius: 3px; font-size: 11px;">BOOLÉEN</span><br>
+            <span style="color: #7f8c8d; font-size: 12px;">Activer Ingress | Default: true</span>
+        </div>
+        <div style="margin: 8px 0; padding: 8px; background: white; border-radius: 3px;">
+            <strong>VALUES_FILE_INGRESS</strong> <span style="background: #95a5a6; color: white; padding: 2px 6px; border-radius: 3px; font-size: 11px;">OPTIONNEL</span><br>
+            <span style="color: #7f8c8d; font-size: 12px;">Fichier YAML Ingress | Default: dashboard-ingress.yaml</span>
+        </div>
+        <div style="margin: 8px 0; padding: 8px; background: white; border-radius: 3px;">
+            <strong>CONTROLLER_INGRESS</strong> <span style="background: #95a5a6; color: white; padding: 2px 6px; border-radius: 3px; font-size: 11px;">OPTIONNEL</span><br>
+            <span style="color: #7f8c8d; font-size: 12px;">Contrôleur Ingress | Default: ingress-nginx</span>
+        </div>
+        <div style="margin: 8px 0; padding: 8px; background: white; border-radius: 3px;">
+            <strong>GENERATE_TOKEN</strong> <span style="background: #3498db; color: white; padding: 2px 6px; border-radius: 3px; font-size: 11px;">BOOLÉEN</span><br>
+            <span style="color: #7f8c8d; font-size: 12px;">Générer token utilisateur K8s | Default: true</span>
+        </div>
+        <div style="margin: 8px 0; padding: 8px; background: white; border-radius: 3px;">
+            <strong>USER_TOKEN</strong> <span style="background: #95a5a6; color: white; padding: 2px 6px; border-radius: 3px; font-size: 11px;">OPTIONNEL</span><br>
+            <span style="color: #7f8c8d; font-size: 12px;">Nom utilisateur token | Default: admin-user</span>
+        </div>
+        <div style="margin: 8px 0; padding: 8px; background: white; border-radius: 3px;">
+            <strong>VALUES_FILE_USERS</strong> <span style="background: #95a5a6; color: white; padding: 2px 6px; border-radius: 3px; font-size: 11px;">OPTIONNEL</span><br>
+            <span style="color: #7f8c8d; font-size: 12px;">Fichier YAML utilisateurs | Default: dashboard-users.yaml</span>
+        </div>
+        <div style="margin: 8px 0; padding: 8px; background: white; border-radius: 3px;">
+            <strong>PROJECT_PATH</strong> <span style="background: #95a5a6; color: white; padding: 2px 6px; border-radius: 3px; font-size: 11px;">OPTIONNEL</span><br>
+            <span style="color: #7f8c8d; font-size: 12px;">Chemin dossier tmp | Default: /tmp/dashboard</span>
+        </div>
+        <div style="margin: 8px 0; padding: 8px; background: white; border-radius: 3px;">
+            <strong>REPO_GIT</strong> <span style="background: #95a5a6; color: white; padding: 2px 6px; border-radius: 3px; font-size: 11px;">OPTIONNEL</span><br>
+            <span style="color: #7f8c8d; font-size: 12px;">URL repo Git | Default: http://[GIT_SERVER]:[GIT_PORT]/git/[REPO_NAME].git</span>
+        </div>
+        <div style="margin: 8px 0; padding: 8px; background: white; border-radius: 3px;">
+            <strong>ANSIBLE_VERBOSITY</strong> <span style="background: #95a5a6; color: white; padding: 2px 6px; border-radius: 3px; font-size: 11px;">OPTIONNEL</span><br>
+            <span style="color: #7f8c8d; font-size: 12px;">Verbosité Ansible (0=Normal, 1-4=Debug) | Default: 0</span>
+        </div>
+        <div style="margin: 8px 0; padding: 8px; background: white; border-radius: 3px;">
+            <strong>EXTRA_VARS</strong> <span style="background: #95a5a6; color: white; padding: 2px 6px; border-radius: 3px; font-size: 11px;">OPTIONNEL</span><br>
+            <span style="color: #7f8c8d; font-size: 12px;">Variables Ansible additionnelles (key=value)</span>
+        </div>
+    </div>
+    
+    <div style="background: #f8f9fa; padding: 15px; border-left: 4px solid #9b59b6; margin: 20px 0;">
+        <h3 style="margin: 0 0 10px 0; color: #2c3e50; font-size: 15px;">📋 Étapes du Pipeline</h3>
+        <div style="margin: 8px 0; padding: 10px; background: white; border-left: 3px solid #3498db; border-radius: 3px;">
+            <strong>Checkout SCM</strong><br>
+            <span style="color: #7f8c8d; font-size: 12px;">Récupération du code source</span>
+        </div>
+        <div style="margin: 8px 0; padding: 10px; background: white; border-left: 3px solid #3498db; border-radius: 3px;">
+            <strong>Parameters Verification</strong><br>
+            <span style="color: #7f8c8d; font-size: 12px;">Validation des paramètres et flag verbosité</span>
+        </div>
+        <div style="margin: 8px 0; padding: 10px; background: white; border-left: 3px solid #3498db; border-radius: 3px;">
+            <strong>Ansible Variables Preparation</strong><br>
+            <span style="color: #7f8c8d; font-size: 12px;">Préparation variables Ansible depuis Jenkins</span>
+        </div>
+        <div style="margin: 8px 0; padding: 10px; background: white; border-left: 3px solid #3498db; border-radius: 3px;">
+            <strong>Ansible Playbook Execution</strong><br>
+            <span style="color: #7f8c8d; font-size: 12px;">Exécution playbook deploy_dashboard_stack_k8s.yml</span>
+        </div>
+    </div>
+    
+    <div style="background: #f8f9fa; padding: 15px; border-left: 4px solid #1abc9c; margin: 20px 0;">
+        <h3 style="margin: 0 0 10px 0; color: #2c3e50; font-size: 15px;">💡 Exemples d'utilisation</h3>
+        <div style="font-family: monospace; background: #ecf0f1; padding: 10px; border-radius: 3px; font-size: 12px;">
+            <div style="margin: 3px 0;">▶ <span style="color: #3498db;">K8s_master</span> → <strong style="color: #e67e22;">Dashboard v1.0.0</strong> → <span style="color: #9b59b6;">Release: kubernetes-dashboard</span></div>
+            <div style="margin: 3px 0;">▶ <span style="color: #3498db;">K8s_worker</span> → <strong style="color: #e67e22;">Déploiement avec Ingress</strong> → <span style="color: #9b59b6;">ingress-nginx</span></div>
+            <div style="margin: 3px 0;">▶ <span style="color: #3498db;">Keycloak</span> → <strong style="color: #e67e22;">Gen Token Admin</strong> → <span style="color: #9b59b6;">admin-user</span></div>
+        </div>
+    </div>
+
+    <div style="background: #f8f9fa; padding: 15px; border-left: 4px solid #e67e22; margin: 20px 0;">
+        <h3 style="margin: 0 0 10px 0; color: #2c3e50; font-size: 15px;">🔧 Environnement</h3>
+        <ul style="margin: 0; padding-left: 20px; font-size: 12px;">
+            <li><code style="background: #ecf0f1; padding: 2px 4px;">ANSIBLE_HOST_KEY_CHECKING</code> = False</li>
+            <li><code style="background: #ecf0f1; padding: 2px 4px;">ANSIBLE_FORKS</code> = 2</li>
+            <li><code style="background: #ecf0f1; padding: 2px 4px;">PLAYBOOK_PATH</code> = deploy_dashboard_stack_k8s.yml</li>
+            <li><code style="background: #ecf0f1; padding: 2px 4px;">ANSIBLE_INVENTORY</code> = inventory/hosts.ini</li>
+        </ul>
+    </div>
+
+    <div style="background: #f8f9fa; padding: 15px; border-left: 4px solid #e74c3c; margin: 20px 0;">
+        <h3 style="margin: 0 0 10px 0; color: #2c3e50; font-size: 15px;">📧 Notifications</h3>
+        <ul style="margin: 0; padding-left: 20px;">
+            <li><strong>Succès</strong> - Email avec détails et instructions de vérification</li>
+            <li><strong>Échec</strong> - Email avec causes possibles et guide de dépannage</li>
+            <li><strong>Rapport</strong> - Artefact archivé: k8s_helm_deployment_report.txt</li>
+            <li><strong>Recipient</strong> - <code style="background: #ecf0f1; padding: 2px 4px;">[EMAIL_RECIPIENT]</code></li>
+        </ul>
+    </div>
+
+    <hr style="border: none; border-top: 1px solid #bdc3c7; margin: 20px 0;">
+    
+    <p style="text-align: center; color: #7f8c8d; margin: 0;">
+        <strong>📧 Contact:</strong> DevOps Team | 
+        <a href="mailto:[EMAIL_RECIPIENT]" style="color: #3498db;">[EMAIL_RECIPIENT]</a>
+    </p>
+</div>
+
+</body>
+</html>
