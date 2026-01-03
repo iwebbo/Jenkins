@@ -1,0 +1,186 @@
+pipeline {
+    agent { label 'ci-agent' }
+
+    options {
+        ansiColor('xterm')
+    }
+
+    environment {
+        ANSIBLE_FORCE_COLOR        = 'true'
+        ANSIBLE_STDOUT_CALLBACK    = 'yaml'
+        ANSIBLE_HOST_KEY_CHECKING  = 'False'
+        ANSIBLE_FORKS              = '2'
+        ANSIBLE_CONFIG             = "${WORKSPACE}/ansible.cfg"
+        ANSIBLE_INVENTORY          = "${WORKSPACE}/inventory/hosts.ini"
+        PLAYBOOK_PATH              = "${WORKSPACE}/playbook/deploy_application.yml"
+        EMAIL_RECIPIENT            = 'devops-team@example.com'
+    }
+
+    parameters {
+        choice(
+            name: 'TARGET_NODE',
+            choices: [
+                'node-linux-01',
+                'node-linux-02',
+                'node-k8s-master',
+                'node-k8s-worker',
+                'node-storage',
+                'node-ci'
+            ],
+            description: 'Target node for application deployment via Ansible.'
+        )
+
+        string(
+            name: 'APP_USER',
+            defaultValue: 'appuser',
+            description: 'System user for the application.'
+        )
+
+        string(
+            name: 'APP_GROUP',
+            defaultValue: 'appgroup',
+            description: 'System group for the application.'
+        )
+
+        string(
+            name: 'APP_INSTALL_DIR',
+            defaultValue: '/opt/app/wiki',
+            description: 'Application installation directory.'
+        )
+
+        choice(
+            name: 'ANSIBLE_VERBOSITY',
+            choices: ['0', '1', '2', '3', '4'],
+            description: '''Ansible verbosity level:
+0 = Normal
+1 = Verbose
+2 = More verbose
+3 = Debug
+4 = Full debug'''
+        )
+
+        text(
+            name: 'EXTRA_VARS',
+            defaultValue: '',
+            description: 'Additional Ansible variables (key=value).'
+        )
+    }
+
+    stages {
+
+        stage('Checkout Source') {
+            steps {
+                checkout scm
+                echo "Source code checked out"
+            }
+        }
+
+        stage('Parameter Validation') {
+            steps {
+                script {
+                    echo "Target node     : ${params.TARGET_NODE}"
+                    echo "Verbosity level : ${params.ANSIBLE_VERBOSITY}"
+
+                    def verbosityFlag = ''
+                    if (params.ANSIBLE_VERBOSITY != '0') {
+                        verbosityFlag = '-' + 'v' * params.ANSIBLE_VERBOSITY.toInteger()
+                    }
+                    env.ANSIBLE_VERBOSE_FLAG = verbosityFlag
+
+                    sh 'ansible --version'
+                }
+            }
+        }
+
+        stage('Ansible Variable Assembly') {
+            steps {
+                script {
+                    def vars = [
+                        "TARGET_NODE='${params.TARGET_NODE}'",
+                        "app_user='${params.APP_USER}'",
+                        "app_group='${params.APP_GROUP}'",
+                        "app_install_dir='${params.APP_INSTALL_DIR}'"
+                    ]
+
+                    if (params.EXTRA_VARS?.trim()) {
+                        vars << params.EXTRA_VARS.trim()
+                    }
+
+                    env.ANSIBLE_EXTRA_VARS = vars.join(' ')
+
+                    echo "Ansible variables assembled"
+                }
+            }
+        }
+
+        stage('Application Deployment') {
+            steps {
+                script {
+                    withCredentials([
+                        sshUserPrivateKey(
+                            credentialsId: 'ssh-key-deployment',
+                            keyFileVariable: 'SSH_KEY_FILE',
+                            usernameVariable: 'SSH_USER'
+                        )
+                    ]) {
+                        sh """
+                            ansible-playbook \
+                                -i ${ANSIBLE_INVENTORY} \
+                                -e ansible_ssh_private_key_file="\${SSH_KEY_FILE}" \
+                                -e "${ANSIBLE_EXTRA_VARS}" \
+                                ${PLAYBOOK_PATH} \
+                                ${ANSIBLE_VERBOSE_FLAG}
+                        """
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+
+        always {
+            script {
+                def report = """
+=== ANSIBLE APPLICATION DEPLOYMENT REPORT ===
+Target Node      : ${params.TARGET_NODE}
+Install Dir      : ${params.APP_INSTALL_DIR}
+Ansible Verbosity: ${params.ANSIBLE_VERBOSITY}
+Build Number     : #${env.BUILD_NUMBER}
+Build Status     : ${currentBuild.currentResult}
+Build Duration   : ${currentBuild.durationString ?: 'N/A'}
+===========================================
+"""
+                writeFile file: 'deployment_report.txt', text: report
+                archiveArtifacts artifacts: 'deployment_report.txt', allowEmptyArchive: true
+            }
+        }
+
+        success {
+            mail(
+                to: env.EMAIL_RECIPIENT,
+                subject: "[CI] ✓ Deployment SUCCESS → ${params.TARGET_NODE}",
+                body: """The application was successfully deployed.
+
+Target Node : ${params.TARGET_NODE}
+Build URL  : ${env.BUILD_URL}
+"""
+            )
+        }
+
+        failure {
+            mail(
+                to: env.EMAIL_RECIPIENT,
+                subject: "[CI] ✗ Deployment FAILURE → ${params.TARGET_NODE}",
+                body: """Deployment failed.
+                    Target Node : ${params.TARGET_NODE}
+                    Logs       : ${env.BUILD_URL}console
+                    """
+            )
+        }
+
+        cleanup {
+            cleanWs(deleteDirs: true)
+        }
+    }
+}
