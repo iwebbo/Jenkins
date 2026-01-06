@@ -52,11 +52,11 @@ pipeline {
             name: 'ANSIBLE_VERBOSITY',
             choices: ['0', '1', '2', '3', '4'],
             description: '''Ansible verbosity level:
-0 = Normal
-1 = Verbose
-2 = More verbose
-3 = Debug
-4 = Full debug'''
+                        0 = Normal
+                        1 = Verbose
+                        2 = More verbose
+                        3 = Debug
+                        4 = Full debug'''
         )
 
         text(
