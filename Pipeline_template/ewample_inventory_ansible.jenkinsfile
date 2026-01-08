@@ -1,0 +1,267 @@
+pipeline {
+    agent { label 'ansible-agent' }
+    
+    options {
+        ansiColor('xterm')
+        buildDiscarder(logRotator(numToKeepStr: '30'))
+    }
+
+    environment {
+        ANSIBLE_FORCE_COLOR = 'true'
+        ANSIBLE_STDOUT_CALLBACK = 'yaml'
+        ANSIBLE_HOST_KEY_CHECKING = 'False'
+        ANSIBLE_FORKS = '5'
+        ANSIBLE_CONFIG = "${WORKSPACE}/ansible.cfg"
+        ANSIBLE_INVENTORY = "${WORKSPACE}/inventory/hosts.ini"
+        PLAYBOOK_PATH = "${WORKSPACE}/playbook/ansible_inventory_fact.yml"
+        EMAIL_RECIPIENT = 'your.email@example.com'
+    }
+    
+    parameters {
+        choice(
+            name: 'TARGET_SERVER',
+            choices: [
+                'all',
+                'prod-web-01',
+                'prod-web-02',
+                'prod-db-01',
+                'dev-server-01',
+                'dev-server-02',
+                'test-server-01',
+                'staging-web-01',
+                'staging-db-01',
+                'monitoring-01',
+                'backup-server'
+            ],
+            description: 'Serveur(s) cible(s) pour le rapport d\'inventaire'
+        )
+        booleanParam(
+            name: 'INCLUDE_ENVIRONMENT',
+            defaultValue: false,
+            description: 'Inclure les variables d\'environnement dans le rapport'
+        )
+        choice(
+            name: 'ANSIBLE_VERBOSITY',
+            choices: ['0', '1', '2', '3', '4'],
+            description: '''Niveau de verbosité Ansible:
+            0 = Normal (défaut)
+            1 = Verbose (-v)
+            2 = Plus verbose (-vv)
+            3 = Debug (-vvv)
+            4 = Debug complet (-vvvv)'''
+        )
+        text(
+            name: 'EXTRA_VARS',
+            defaultValue: '',
+            description: 'Variables Ansible supplémentaires (format: key=value séparées par espaces)'
+        )
+    }
+    
+    stages {
+        stage('Checkout SCM') {
+            steps {
+                script {
+                    checkout scm
+                    echo "✅ Workspace cloned"
+                }
+            }
+        }
+
+        stage('Validation des Paramètres') {
+            steps {
+                script {
+                    echo "=== VALIDATION DES PARAMÈTRES ==="
+                    echo "Serveur cible: ${params.TARGET_SERVER}"
+                    echo "Inclure environnement: ${params.INCLUDE_ENVIRONMENT}"
+                    echo "Verbosité: ${params.ANSIBLE_VERBOSITY}"
+                    
+                    // Déterminer le flag de verbosité
+                    def verbosityFlag = ''
+                    if (params.ANSIBLE_VERBOSITY != '0') {
+                        verbosityFlag = '-' + 'v' * params.ANSIBLE_VERBOSITY.toInteger()
+                    }
+                    env.ANSIBLE_VERBOSE_FLAG = verbosityFlag
+                    echo "Flag verbosité: '${env.ANSIBLE_VERBOSE_FLAG ?: 'None'}'"
+                    
+                    // Vérifier Ansible
+                    sh '''
+                        echo "=== Version Ansible ==="
+                        ansible --version
+                    '''
+                }
+            }
+        }
+        
+        stage('Préparation des Variables') {
+            steps {
+                script {
+                    echo "=== PRÉPARATION DES VARIABLES ANSIBLE ==="
+                    
+                    def ansibleVars = []
+                    
+                    // Variable hôte cible
+                    ansibleVars << "HOST='${params.TARGET_SERVER}'"
+                    
+                    // Répertoire de rapport
+                    ansibleVars << "inventory_report_dir='${env.WORKSPACE}/inventory_reports'"
+                    
+                    // Inclure les variables d'environnement
+                    ansibleVars << "include_env=${params.INCLUDE_ENVIRONMENT}"
+                    
+                    // Variables supplémentaires
+                    if (params.EXTRA_VARS?.trim()) {
+                        ansibleVars << params.EXTRA_VARS.trim()
+                    }
+                    
+                    // Stocker les variables
+                    env.ANSIBLE_EXTRA_VARS = ansibleVars.join(' ')
+                    
+                    echo "Variables Ansible préparées:"
+                    echo "${env.ANSIBLE_EXTRA_VARS}"
+                }
+            }
+        }
+        
+        stage('Génération des Rapports d\'Inventaire') {
+            steps {
+                script {
+                    echo "=== GÉNÉRATION DES RAPPORTS D'INVENTAIRE ==="
+                    
+                    withCredentials([
+                        sshUserPrivateKey(
+                            credentialsId: 'ansible-ssh-key',
+                            keyFileVariable: 'SSH_KEY_FILE',
+                            usernameVariable: 'SSH_USER'
+                        )
+                    ]) {
+                        sh """
+                            ansible-playbook \
+                                -i ${ANSIBLE_INVENTORY} \
+                                -e ansible_ssh_private_key_file="\${SSH_KEY_FILE}" \
+                                -e "${ANSIBLE_EXTRA_VARS}" \
+                                ${PLAYBOOK_PATH} \
+                                ${ANSIBLE_VERBOSE_FLAG ?: ''}
+                        """
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            echo "Génération des rapports d'inventaire terminée"
+            
+            script {
+                sh '''
+                    # Vérifier les rapports générés
+                    if [ -d "./inventory_reports" ]; then
+                        echo "Rapports trouvés:"
+                        find ./inventory_reports -name "*.html" -o -name "*.json" | head -20
+                    fi
+                '''
+                
+                // Archiver les rapports
+                archiveArtifacts artifacts: 'inventory_reports/**/*', allowEmptyArchive: true
+                
+                // Créer rapport de build
+                def report = """
+                === RAPPORT ANSIBLE INVENTORY ===
+                Serveur cible: ${params.TARGET_SERVER}
+                Inclure environnement: ${params.INCLUDE_ENVIRONMENT}
+                Verbosité Ansible: ${params.ANSIBLE_VERBOSITY}
+                Variables extra: ${params.EXTRA_VARS ?: 'Aucune'}
+                Variables Ansible: ${env.ANSIBLE_EXTRA_VARS ?: 'Non générées'}
+                Build: #${env.BUILD_NUMBER}
+                Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+                Statut: ${currentBuild.currentResult}
+                Durée: ${currentBuild.durationString ?: 'N/A'}
+                ====================================
+                """
+                writeFile file: 'inventory_build_report.txt', text: report
+                archiveArtifacts artifacts: 'inventory_build_report.txt', allowEmptyArchive: true
+            }
+        }
+        
+        success {
+            script {
+                echo "✅ Génération des rapports d'inventaire réussie!"
+                
+                currentBuild.description = "Inventory → ${params.TARGET_SERVER}"
+                
+                def emailBody = """
+                    ANSIBLE INVENTORY REPORT - SUCCÈS
+
+                    Serveur cible: ${params.TARGET_SERVER}
+                    Inclure environnement: ${params.INCLUDE_ENVIRONMENT}
+                    Verbosité Ansible: ${params.ANSIBLE_VERBOSITY}
+                    Build: #${env.BUILD_NUMBER}
+                    Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+                    Durée: ${currentBuild.durationString ?: 'N/A'}
+
+                    Détails du build: ${env.BUILD_URL}
+                    Rapports: ${env.BUILD_URL}artifact/
+
+                    Variables Ansible utilisées:
+                    ${env.ANSIBLE_EXTRA_VARS ?: 'Non générées'}
+
+                    Les rapports d'inventaire Ansible ont été générés avec succès.
+                    
+                    Contenu des rapports:
+                    - Variables magiques Ansible (inventory_hostname, group_names, etc.)
+                    - Informations système (OS, kernel, CPU, mémoire)
+                    - Configuration réseau (interfaces, IPs, DNS)
+                    - Variables de connexion (SSH, become, etc.)
+                    - Groupes Ansible
+                    - Date et heure
+                    ${params.INCLUDE_ENVIRONMENT ? '- Variables d\'environnement' : ''}
+
+                    Les rapports sont disponibles dans les artifacts du build.
+                """
+                
+                mail to: env.EMAIL_RECIPIENT,
+                    subject: "[Jenkins] Ansible Inventory - ${params.TARGET_SERVER} - Succès",
+                    body: emailBody
+            }
+        }
+        
+        failure {
+            script {
+                echo "❌ Échec de la génération des rapports d'inventaire"
+                
+                currentBuild.description = "Inventory → ${params.TARGET_SERVER} - ÉCHEC"
+                
+                def emailBody = """
+                    ANSIBLE INVENTORY REPORT - ÉCHEC
+
+                    Serveur cible: ${params.TARGET_SERVER}
+                    Inclure environnement: ${params.INCLUDE_ENVIRONMENT}
+                    Verbosité Ansible: ${params.ANSIBLE_VERBOSITY}
+                    Build: #${env.BUILD_NUMBER}
+                    Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+
+                    Logs d'erreur: ${env.BUILD_URL}console
+
+                    Variables Ansible utilisées:
+                    ${env.ANSIBLE_EXTRA_VARS ?: 'Non générées'}
+
+                    Actions à entreprendre:
+                    - Vérifier les logs de console
+                    - Vérifier la connectivité SSH vers ${params.TARGET_SERVER}
+                    - Vérifier que le rôle ansible_inventory est déployé
+                    - Vérifier les permissions sur le workspace Jenkins
+
+                    Veuillez vérifier les logs pour plus de détails.
+                """
+                
+                mail to: env.EMAIL_RECIPIENT,
+                    subject: "[Jenkins] Ansible Inventory - Échec - ${params.TARGET_SERVER}",
+                    body: emailBody
+            }
+        }
+        
+        cleanup {
+            cleanWs()
+        }
+    }
+}
