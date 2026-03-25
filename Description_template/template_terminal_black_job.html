@@ -1,0 +1,126 @@
+<div style="font-family: 'Menlo', 'Monaco', 'Courier New', monospace; font-size: 13px; width: 100%; margin: 10px 0;">
+    <div style="background: #1e1e1e; border: 1px solid #333; border-radius: 10px; overflow: hidden; box-shadow: 0 8px 32px rgba(0,0,0,0.3);">
+
+        <!-- Title Bar macOS -->
+        <div style="background: #2d2d2d; padding: 10px 14px; display: flex; align-items: center; border-bottom: 1px solid #333;">
+            <span style="width: 12px; height: 12px; border-radius: 50%; background: #ff5f57; display: inline-block; margin-right: 8px;"></span>
+            <span style="width: 12px; height: 12px; border-radius: 50%; background: #febc2e; display: inline-block; margin-right: 8px;"></span>
+            <span style="width: 12px; height: 12px; border-radius: 50%; background: #28c840; display: inline-block; margin-right: 8px;"></span>
+            <span style="color: #888; font-size: 12px; margin-left: 8px;">ansible@aecoding — galaxy deploy</span>
+        </div>
+
+        <!-- Terminal Body -->
+        <div style="padding: 20px;">
+
+            <!-- ASCII Header -->
+            <pre style="color: #28c840; font-size: 11px; line-height: 1.3; margin: 0 0 6px 0; opacity: 0.7;">   ___           _ _    _
+  / _ |_ _  ___(_) |__| |___
+ / /_| | ' \(_-< | '_ \ / -_)
+/_/  |_|_||_/__/_|_.__/_\___|
+  ╚═ Galaxy Collection Deploy</pre>
+            <div style="color: #555; font-size: 11px; margin: 0 0 16px 0;">   Installation automatisée via Jenkins Pipeline</div>
+
+            <!-- Separator -->
+            <div style="border-bottom: 1px dashed #333; margin: 0 0 16px 0;"></div>
+
+            <!-- Section: Paramètres principaux -->
+            <div style="color: #28c840; font-size: 12px; margin: 0 0 12px 0;">
+                <span>// paramètres principaux</span>
+                <span style="color: #333;"> ──────────────────────</span>
+            </div>
+
+            <div style="padding: 2px 8px; margin: 4px 0; display: flex;">
+                <span style="color: #555; width: 16px;">$</span>
+                <span style="color: #f0a050; width: 220px; display: inline-block;">TARGET_SERVER</span>
+                <span style="color: #888;">= </span>
+                <span style="color: #e8e8e8;">${params.TARGET_SERVER}</span>
+            </div>
+            <div style="padding: 2px 8px; margin: 4px 0; display: flex;">
+                <span style="color: #555; width: 16px;">$</span>
+                <span style="color: #f0a050; width: 220px; display: inline-block;">GALAXY_COLLECTION</span>
+                <span style="color: #888;">= </span>
+                <span style="color: #e8e8e8;">${params.GALAXY_COLLECTION}</span>
+            </div>
+            <div style="padding: 2px 8px; margin: 4px 0; display: flex;">
+                <span style="color: #555; width: 16px;">$</span>
+                <span style="color: #f0a050; width: 220px; display: inline-block;">ANSIBLE_VERBOSITY</span>
+                <span style="color: #888;">= </span>
+                <span style="color: #e8e8e8;">${params.ANSIBLE_VERBOSITY}</span>
+            </div>
+            <div style="padding: 2px 8px; margin: 4px 0; display: flex;">
+                <span style="color: #555; width: 16px;">$</span>
+                <span style="color: #f0a050; width: 220px; display: inline-block;">EXTRA_VARS</span>
+                <span style="color: #888;">= </span>
+                <span style="color: #e8e8e8;">${params.EXTRA_VARS ?: 'Aucun'}</span>
+            </div>
+
+            <!-- Separator -->
+            <div style="border-bottom: 1px dashed #333; margin: 16px 0;"></div>
+
+            <!-- Section: Env vars -->
+            <div style="color: #e05555; font-size: 12px; margin: 0 0 12px 0;">
+                <span>// variables d'environnement</span>
+                <span style="color: #333;"> ────────────────────</span>
+            </div>
+
+            <div style="padding: 2px 8px; margin: 4px 0; display: flex;">
+                <span style="color: #555; width: 16px;">›</span>
+                <span style="color: #8ae68a; width: 220px; display: inline-block;">ANSIBLE_HOST_KEY_CHECKING</span>
+                <span style="color: #888;">= </span>
+                <span style="color: #e8e8e8;">False</span>
+            </div>
+            <div style="padding: 2px 8px; margin: 4px 0; display: flex;">
+                <span style="color: #555; width: 16px;">›</span>
+                <span style="color: #8ae68a; width: 220px; display: inline-block;">ANSIBLE_FORKS</span>
+                <span style="color: #888;">= </span>
+                <span style="color: #e8e8e8;">2</span>
+            </div>
+            <div style="padding: 2px 8px; margin: 4px 0; display: flex;">
+                <span style="color: #555; width: 16px;">›</span>
+                <span style="color: #8ae68a; width: 220px; display: inline-block;">ANSIBLE_CONFIG</span>
+                <span style="color: #888;">= </span>
+                <span style="color: #e8e8e8;">${env.WORKSPACE}/ansible.cfg</span>
+            </div>
+            <div style="padding: 2px 8px; margin: 4px 0; display: flex;">
+                <span style="color: #555; width: 16px;">›</span>
+                <span style="color: #8ae68a; width: 220px; display: inline-block;">ANSIBLE_INVENTORY</span>
+                <span style="color: #888;">= </span>
+                <span style="color: #e8e8e8;">${env.WORKSPACE}/inventory/hosts.ini</span>
+            </div>
+            <div style="padding: 2px 8px; margin: 4px 0; display: flex;">
+                <span style="color: #555; width: 16px;">›</span>
+                <span style="color: #8ae68a; width: 220px; display: inline-block;">PLAYBOOK_PATH</span>
+                <span style="color: #888;">= </span>
+                <span style="color: #e8e8e8;">${env.WORKSPACE}/playbook/deploy_ansible_galaxy_collection.yml</span>
+            </div>
+            <div style="padding: 2px 8px; margin: 4px 0; display: flex;">
+                <span style="color: #555; width: 16px;">›</span>
+                <span style="color: #8ae68a; width: 220px; display: inline-block;">EMAIL_RECIPIENT</span>
+                <span style="color: #888;">= </span>
+                <a href="mailto:l.kieran95@gmail.com" style="color: #5cb85c; text-decoration: none; border-bottom: 1px dashed #2d5a2d;">l.kieran95@gmail.com</a>
+            </div>
+
+            <!-- Separator -->
+            <div style="border-bottom: 1px dashed #333; margin: 16px 0;"></div>
+
+            <!-- Section: Execution preview -->
+            <div style="color: #a78bfa; font-size: 12px; margin: 0 0 12px 0;">
+                <span>// exécution preview</span>
+                <span style="color: #333;"> ─────────────────────────────</span>
+            </div>
+
+            <div style="background: #141414; border: 1px solid #2a2a2a; border-radius: 6px; padding: 12px 14px; margin: 0 0 4px 0;">
+                <div style="color: #555; font-size: 11px; margin: 0 0 8px 0;">$ ansible-playbook deploy_ansible_galaxy_collection.yml \</div>
+                <div style="padding: 2px 0 2px 20px; color: #f0a050; font-size: 11px;">--limit <span style="color: #e8e8e8;">${params.TARGET_SERVER}</span> \</div>
+                <div style="padding: 2px 0 2px 20px; color: #f0a050; font-size: 11px;">--extra-vars <span style="color: #e8e8e8;">"galaxy_collection=${params.GALAXY_COLLECTION}"</span> \</div>
+                <div style="padding: 2px 0 2px 20px; color: #f0a050; font-size: 11px;"><span style="color: #e8e8e8;">${params.ANSIBLE_VERBOSITY}</span></div>
+            </div>
+
+            <!-- Footer -->
+            <div style="border-top: 1px dashed #333; margin-top: 16px; padding-top: 12px; font-size: 11px; color: #3d5a3d; display: flex; justify-content: space-between; align-items: center;">
+                <span><span style="color: #28c840;">ansible@aecoding:~$</span> <span style="display: inline-block; width: 8px; height: 13px; background: #28c840; vertical-align: middle;"></span></span>
+                <span>📧 DevOps Team • <a href="mailto:l.kieran95@gmail.com" style="color: #5cb85c; text-decoration: none;">l.kieran95@gmail.com</a></span>
+            </div>
+        </div>
+    </div>
+</div>
