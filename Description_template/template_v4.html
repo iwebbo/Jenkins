@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Apache2 Management Pipeline</title>
+</head>
+<body>
+
+<div style="font-family: 'Menlo', 'Monaco', 'Courier New', monospace; font-size: 13px; width: 100%; max-width: 700px; margin: 10px auto;">
+    <!-- Terminal Frame -->
+    <div style="background: #1e1e1e; border: 1px solid #333; border-radius: 10px; overflow: hidden; box-shadow: 0 8px 32px rgba(0,0,0,0.3);">
+
+        <!-- Title Bar macOS -->
+        <div style="background: #2d2d2d; padding: 10px 14px; display: flex; align-items: center; border-bottom: 1px solid #333;">
+            <span style="width: 12px; height: 12px; border-radius: 50%; background: #ff5f57; display: inline-block; margin-right: 8px;"></span>
+            <span style="width: 12px; height: 12px; border-radius: 50%; background: #febc2e; display: inline-block; margin-right: 8px;"></span>
+            <span style="width: 12px; height: 12px; border-radius: 50%; background: #28c840; display: inline-block; margin-right: 8px;"></span>
+            <span style="color: #888; font-size: 12px; margin-left: 8px;">jenkins@aecoding — apache2-management</span>
+        </div>
+
+        <!-- Terminal Body -->
+        <div style="padding: 20px; color: #d4d4d4;">
+
+            <!-- ASCII Header -->
+            <pre style="color: #e74c3c; font-size: 11px; line-height: 1.3; margin: 0 0 6px 0; opacity: 0.85; overflow-x: auto;">
+    _                  _                  _   __  __                               _   
+   / \   _ __   __ _  | |__   ___   ___  | | |  \/  | __ _ _ __   __ _  __ _  ___ | |_ 
+  / _ \ | '_ \ / _` | | '_ \ / _ \ / _ \ | | | |\/| |/ _` | '_ \ / _` |/ _` |/ _ \| __|
+ / ___ \| |_) | (_| | | | | |  __/  __/ | | | |  | | (_| | | | | (_| | (_| | (_) | |_ 
+/_/   \_\ .__/ \__,_| |_| |_|\___|\___| |_| |_|  |_|\__,_|_| |_|\__,_|\__, |\___/ \__|
+        |_|                                                           |___/           
+            </pre>
+            <div style="color: #7f8c8d; font-size: 11px; margin: 0 0 16px 0; font-style: italic;">Gestion automatisée des services Apache2 sur serveurs Linux</div>
+
+            <!-- Separator -->
+            <div style="border-bottom: 1px dashed #333; margin: 0 0 16px 0;"></div>
+
+            <!-- Section: Fonctionnalités principales -->
+            <div style="margin-bottom: 20px;">
+                <div style="color: #3498db; font-size: 12px; margin-bottom: 8px;">
+                    <span style="color: #3498db;">// fonctionnalités principales</span>
+                    <span style="color: #333;"> ─────────────────────────</span>
+                </div>
+                <ul style="margin: 0; padding-left: 20px; font-size: 12px; line-height: 1.6; color: #c5c5c5;">
+                    <li><strong style="color: #fff;">Contrôle des services</strong> - Start, Stop, Restart, Reload, Graceful</li>
+                    <li><strong style="color: #fff;">Validation de configuration</strong> - Test avant action</li>
+                    <li><strong style="color: #fff;">Vérification de statut</strong> - Contrôle de l'état actuel</li>
+                    <li><strong style="color: #fff;">Multi-distribution</strong> - Support Debian, Ubuntu, RHEL, CentOS</li>
+                    <li><strong style="color: #fff;">Notifications email</strong> - Alertes automatiques</li>
+                </ul>
+            </div>
+
+            <!-- Section: Variables principales -->
+            <div style="margin-bottom: 20px;">
+                <div style="color: #3498db; font-size: 12px; margin-bottom: 8px;">
+                    <span style="color: #3498db;">// variables principales</span>
+                    <span style="color: #333;"> ─────────────────────────</span>
+                </div>
+                <ul style="margin: 0; padding-left: 20px; font-size: 12px; line-height: 1.6; color: #c5c5c5;">
+                    <li><code style="background: #2d2d2d; color: #5cb85c; padding: 2px 5px; border-radius: 3px;">ACTION_APACHE</code> - start / stop / restart / reload / graceful / status</li>
+                    <li><code style="background: #2d2d2d; color: #5cb85c; padding: 2px 5px; border-radius: 3px;">TARGET_SERVER</code> - Serveur Linux cible</li>
+                    <li><code style="background: #2d2d2d; color: #5cb85c; padding: 2px 5px; border-radius: 3px;">VALIDATE_CONFIG</code> - Validation configuration (true/false)</li>
+                    <li><code style="background: #2d2d2d; color: #5cb85c; padding: 2px 5px; border-radius: 3px;">CHECK_STATUS</code> - Vérification statut (true/false)</li>
+                    <li><code style="background: #2d2d2d; color: #5cb85c; padding: 2px 5px; border-radius: 3px;">ANSIBLE_VERBOSITY</code> - Niveau de debug Ansible (0-4)</li>
+                    <li><code style="background: #2d2d2d; color: #5cb85c; padding: 2px 5px; border-radius: 3px;">EXTRA_VARS</code> - Variables Ansible supplémentaires</li>
+                </ul>
+            </div>
+
+            <!-- Section: Exemples d'utilisation -->
+            <div style="margin-bottom: 20px;">
+                <div style="color: #3498db; font-size: 12px; margin-bottom: 8px;">
+                    <span style="color: #3498db;">// exemples d'utilisation</span>
+                    <span style="color: #333;"> ─────────────────────────</span>
+                </div>
+                <div style="font-family: monospace; background: #252526; padding: 10px; border-radius: 4px; font-size: 11px; border: 1px solid #333;">
+                    <div style="margin: 4px 0;">▶ <span style="color: #4fc1ff;">start</span> → <strong style="color: #ce9178;">validation ON</strong> → <span style="color: #9b59b6;">ReverseProxy</span></div>
+                    <div style="margin: 4px 0;">▶ <span style="color: #4fc1ff;">restart</span> → <strong style="color: #ce9178;">graceful reload</strong> → <span style="color: #9b59b6;">ServerVM1</span></div>
+                    <div style="margin: 4px 0;">▶ <span style="color: #4fc1ff;">stop</span> → <strong style="color: #ce9178;">maintenance mode</strong> → <span style="color: #9b59b6;">all-linux</span></div>
+                </div>
+            </div>
+
+            <!-- Section: Sécurité & Validation -->
+            <div style="margin-bottom: 20px;">
+                <div style="color: #3498db; font-size: 12px; margin-bottom: 8px;">
+                    <span style="color: #3498db;">// sécurité & validation</span>
+                    <span style="color: #333;"> ─────────────────────────</span>
+                </div>
+                <ul style="margin: 0; padding-left: 20px; font-size: 12px; line-height: 1.6; color: #c5c5c5;">
+                    <li><strong style="color: #fff;">Test de configuration</strong> - Validation avant changement</li>
+                    <li><strong style="color: #fff;">Vérification des ports</strong> - Contrôle ports 80/443</li>
+                    <li><strong style="color: #fff;">Détection automatique</strong> - Service Apache selon distribution</li>
+                    <li><strong style="color: #fff;">Rollback sécurisé</strong> - Annulation en cas d'erreur</li>
+                </ul>
+            </div>
+
+            <!-- Footer -->
+            <div style="border-top: 1px dashed #333; margin-top: 20px; padding-top: 12px; font-size: 11px; color: #7f8c8d; display: flex; justify-content: space-between; align-items: center;">
+                <span><span style="color: #28c840;">jenkins@aecoding:~$</span> <span style="display: inline-block; width: 8px; height: 13px; background: #28c840; vertical-align: middle; animation: blink 1s step-end infinite;"></span></span>
+                <span>DevOps Team • <a href="mailto:l.kieran95@gmail.com" style="color: #4fc1ff; text-decoration: none;">email@gmail.com</a></span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+@keyframes blink { 50% { opacity: 0; } }
+</style>
+
+</body>
+</html>

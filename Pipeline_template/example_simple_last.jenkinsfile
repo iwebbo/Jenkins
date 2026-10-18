@@ -1,0 +1,182 @@
+pipeline {
+    agent { label 'agent' }
+    options {
+        ansiColor('xterm')
+    }
+
+    environment {
+        ANSIBLE_FORCE_COLOR = 'true'
+        ANSIBLE_STDOUT_CALLBACK = 'yaml'
+        ANSIBLE_HOST_KEY_CHECKING = 'False'
+        ANSIBLE_FORKS = '2'
+        ANSIBLE_CONFIG = "${WORKSPACE}/ansible.cfg"
+        ANSIBLE_INVENTORY = "${WORKSPACE}/inventory/hosts.ini"
+        PLAYBOOK_PATH = "${WORKSPACE}/playbook/deploy_certificate.yml"
+        EMAIL_RECIPIENT = 'security-team@company.local'
+    }
+
+    parameters {
+        choice(
+            name: 'TARGET_SERVER',
+            choices: [
+                'all'
+            ],
+            description: 'Serveur cible pour l\'installation de certificat'
+        )
+        booleanParam(
+            name: 'DRY_RUN',
+            defaultValue: false,
+            description: 'Mode dry-run (--check) pour simuler sans appliquer'
+        )
+        choice(
+            name: 'ANSIBLE_VERBOSITY',
+            choices: ['0', '1', '2', '3', '4'],
+            description: 'Niveau de verbosité Ansible (0=Normal, 4=Debug complet)'
+        )
+        text(
+            name: 'EXTRA_VARS',
+            defaultValue: '',
+            description: 'Variables Ansible supplémentaires (format: key=value)'
+        )
+    }
+    
+    stages {
+        stage('Récupération Code') {
+            steps {
+                script {
+                    checkout scm
+                    sh 'echo "Workspace cloned"'
+                }
+            }
+        }
+
+        stage('Validation Paramètres') {
+            steps {
+                script {
+                    echo "=== Validation Paramètres ==="
+                    echo "Serveur cible: ${params.TARGET_SERVER}"
+                    echo "Verbosité: ${params.ANSIBLE_VERBOSITY}"
+                    
+                    def verbosityFlag = ''
+                    if (params.ANSIBLE_VERBOSITY != '0') {
+                        verbosityFlag = '-' + 'v' * params.ANSIBLE_VERBOSITY.toInteger()
+                    }
+                    env.ANSIBLE_VERBOSE_FLAG = verbosityFlag
+                    
+                    def ansibleFlags = []
+                    if (params.DRY_RUN) {
+                        ansibleFlags << '--check'
+                    }
+                    env.ANSIBLE_CHECK_FLAGS = ansibleFlags.join(' ')
+                    
+                    sh 'ansible --version'
+                }
+            }
+        }
+        
+        stage('Configuration Variables') {
+            steps {
+                script {
+                    def ansibleVars = []
+                    ansibleVars << "HOST='${params.TARGET_SERVER}'"
+                    
+                    if (params.EXTRA_VARS.trim() != '') {
+                        ansibleVars << params.EXTRA_VARS.trim()
+                    }
+                    
+                    env.ANSIBLE_EXTRA_VARS = ansibleVars.join(' ')
+                    echo "Variables Ansible: ${env.ANSIBLE_EXTRA_VARS}"
+                }
+            }
+        }
+
+        stage('Déploiement Certificat') {
+            steps {
+                script {
+                    withCredentials([sshUserPrivateKey(credentialsId: 'ssh-key-ansible-user-secret-file', keyFileVariable: 'SSH_KEY_FILE', usernameVariable: 'SSH_USER')]) { 
+                        sh """
+                            ansible-playbook \
+                                -i ${ANSIBLE_INVENTORY} \
+                                -e ansible_ssh_private_key_file="\${SSH_KEY_FILE}" \
+                                -e "${ANSIBLE_EXTRA_VARS}" \
+                                ${PLAYBOOK_PATH} \
+                                ${ANSIBLE_CHECK_FLAGS} \
+                                ${ANSIBLE_VERBOSE_FLAG}
+                        """
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            echo "Déploiement terminé"
+            script {
+                def report = """
+                === RAPPORT DÉPLOIEMENT CERTIFICAT ===
+                Serveur cible: ${params.TARGET_SERVER}
+                Dry-run: ${params.DRY_RUN}
+                Verbosité: ${params.ANSIBLE_VERBOSITY}
+                Build: #${env.BUILD_NUMBER}
+                Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+                Statut: ${currentBuild.currentResult}
+                Durée: ${currentBuild.durationString ?: 'N/A'}
+                ====================================
+                """
+                writeFile file: 'cert_deploy_report.txt', text: report
+                archiveArtifacts artifacts: 'cert_deploy_report.txt', allowEmptyArchive: true
+            }
+        }
+        
+        success {
+            script {
+                currentBuild.description = "Certificat déployé sur → ${params.TARGET_SERVER}"
+                
+                def emailBody = """
+                DÉPLOIEMENT CERTIFICAT - SUCCÈS
+
+                Serveur cible: ${params.TARGET_SERVER}
+                Build: #${env.BUILD_NUMBER}
+                Date: ${new Date().format('yyyy-MM-dd HH:mm:ss')}
+                Durée: ${currentBuild.durationString ?: 'N/A'}
+
+                Détails: ${env.BUILD_URL}
+
+                Le certificat a été installé avec succès.
+                """
+                
+                mail to: "${env.EMAIL_RECIPIENT}",
+                    subject: "[Jenkins] Déploiement Certificat sur ${params.TARGET_SERVER} - Succès",
+                    body: emailBody
+            }
+        }
+        
+        failure {
+            script {
+                currentBuild.description = "Déploiement certificat → ÉCHEC"
+                
+                def emailBody = """
+                DÉPLOIEMENT CERTIFICAT - ÉCHEC
+
+                Serveur cible: ${params.TARGET_SERVER}
+                Build: #${env.BUILD_NUMBER}
+                Date: ${new Date().format('yyyy-MM-dd HH:mm:ss'}
+
+                Logs: ${env.BUILD_URL}console
+
+                Vérifiez les logs pour plus de détails.
+                """
+                
+                mail to: "${env.EMAIL_RECIPIENT}",
+                    subject: "[Jenkins] Déploiement Certificat - Échec sur ${params.TARGET_SERVER}",
+                    body: emailBody
+            }
+        }
+        
+        cleanup {
+            cleanWs()
+        }
+    }
+
+}
