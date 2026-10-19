@@ -1,61 +1,87 @@
-# Jenkins Repository
+# Jenkins Pipeline Template - Groovy Example
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Jenkins](https://img.shields.io/badge/Jenkins-D33833?logo=jenkins&logoColor=white)](https://www.jenkins.io/)
+This template provides a comprehensive example of building pipelines using Jenkins Declarative Pipeline syntax with Groovy DSL.
 
-## 📋 Description
+## Table of Contents
 
-This repository contains a collection of Jenkinsfiles for automating CI/CD processes with Jenkins. These pipeline files are designed to facilitate continuous integration and automated deployment for your projects.
+- [Features](#features)
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Usage Examples](#usage-examples)
+- [Best Practices](#best-practices)
 
-## 🚀 Features
+## Features
 
-- **CI/CD Pipelines**: Jenkins scripts for build and deployment automation
-- **Modular Configuration**: Jenkinsfiles adaptable to different environments
-- **Best Practices**: Implementation of recommended Jenkins standards
-- **Documentation**: Detailed comments in pipeline files
+| Feature | Description |
+|---------|-------------|
+| Multi-stage pipeline | Checkout, Build, Test, Quality Gates, Deploy |
+| Environment variables | Secure configuration via env() function |
+| Retry logic | Built-in retry mechanism for flaky operations |
+| Health checks | Pre and post-deployment validation |
+| Notifications | Slack/email integration |
+| Release notes | Automatic changelog generation |
 
-## 📁 Project Structure
+## Prerequisites
 
-```
-Jenkins/
-├── Jenkinsfile              # Main pipeline
-├── pipelines/              # Specific pipelines folder
-│   ├── build.jenkinsfile   # Build pipeline
-│   ├── test.jenkinsfile    # Test pipeline
-│   └── deploy.jenkinsfile  # Deployment pipeline
-├── scripts/               # Utility scripts
-└── README.md             # Documentation
-```
+- Jenkins installation (Cloud or on-premise)
+- Git plugin installed
+- Build Tools Plugin (for Gradle/Maven)
+- Credentials Plugin configured
+- Shared Library configured (optional but recommended)
 
-## 🛠️ Prerequisites
+## Installation
 
-- **Jenkins**: Version 2.400+ recommended
-- **Required Jenkins Plugins**:
-  - Pipeline Plugin
-  - Git Plugin
-  - Workspace Cleanup Plugin
-  - (Add other plugins based on your needs)
-
-## 📖 Usage
-
-### 1. Clone the repository
+### 1. Configure Pipeline Script Path
 
 ```bash
-git clone https://github.com/iwebbo/Jenkins.git
-cd Jenkins
+# In Jenkins System Configuration
+Pipeline script path: ${env.JOB_HOME}/src/main/pipeline/BuildPipeline.groovy
 ```
 
-### 2. Jenkins Configuration
+### 2. Create Shared Library
 
-1. Open your Jenkins instance
-2. Create a new "Pipeline" job
-3. In the job configuration, select "Pipeline script from SCM"
-4. Configure your Git repository
-5. Specify the path to the desired Jenkinsfile
+```groovy
+// File: src/main/lib/shared-lib.groovy
+@Library('shared-lib@1.0') _ import
+```
 
-### 3. Customization
+Configure in Jenkins System Configuration:
+- Name: `shared-lib`
+- Version: `1.0`
+- Description: `Reusable pipeline utilities`
 
-Modify the Jenkinsfiles according to your needs:
+### 3. Configure Shared Library URL
+
+```bash
+# In Jenkins System Configuration
+Shared library URL: ${env.JOB_HOME}/src/main/lib/
+```
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `APP_ENV` | - | Deployment environment (production/staging) |
+| `DB_HOST` | localhost | Database host |
+| `DB_PORT` | 5432 | Database port |
+| `API_KEY` | - | External API key |
+| `SLACK_WEBHOOK_URL` | - | Slack notification URL |
+
+### Pipeline Parameters
+
+```groovy
+parameters {
+    string(name: 'VERSION', defaultValue: '1.0.0')
+    string(name: 'BUILD_NUMBER', defaultValue: '1.0.0-SNAPSHOT')
+}
+```
+
+## Usage Examples
+
+### Basic Pipeline
 
 ```groovy
 pipeline {
@@ -64,127 +90,137 @@ pipeline {
     stages {
         stage('Build') {
             steps {
-                // Your build steps
-                echo 'Building...'
+                sh '''./gradlew build --no-daemon'''
             }
         }
         
         stage('Test') {
             steps {
-                // Your tests
-                echo 'Testing...'
-            }
-        }
-        
-        stage('Deploy') {
-            steps {
-                // Your deployment
-                echo 'Deploying...'
+                sh '''./gradlew test --no-daemon'''
             }
         }
     }
 }
 ```
 
-## ⚙️ Configuration
-
-### Environment Variables
-
-Define the following variables in Jenkins:
-
-- `BUILD_ENV`: Build environment (dev/staging/prod)
-- `DEPLOY_TARGET`: Deployment target
-- `NOTIFICATION_EMAIL`: Email for notifications
-
-### Pipeline Parameters
-
-Each pipeline can be configured with specific parameters. Check the comments in each Jenkinsfile for more details.
-
-## 📚 Usage Examples
-
-### Basic Pipeline
+### Using Shared Library Functions
 
 ```groovy
-@Library('your-shared-library') _
-
-pipeline {
-    agent any
-    
-    environment {
-        BUILD_NUMBER = "${env.BUILD_NUMBER}"
-    }
-    
-    stages {
-        stage('Checkout') {
-            steps {
-                checkout scm
-            }
-        }
-        // Other stages...
-    }
-    
-    post {
-        always {
-            cleanWs()
+stage('Deploy') {
+    steps {
+        script {
+            // Use shared library function
+            deployToEnvironment('production', 'deployScript')
+            
+            // Health check
+            performHealthCheck()
+            
+            // Send notification
+            sendNotification('SUCCESS', "Deployment complete")
         }
     }
 }
 ```
 
-## 🔧 Troubleshooting
+### Conditional Pipeline Execution
 
-### Common Issues
+```groovy
+when {
+    expression { env('DEPLOYMENT_ENV') == 'production' }
+}
+steps {
+    sh '''./gradlew deployProduction --no-daemon'''
+}
+```
 
-1. **Pipeline won't start**:
-   - Check repository permissions
-   - Ensure Jenkins can access the SCM
+## Best Practices
 
-2. **Syntax errors**:
-   - Use Jenkins pipeline validator
-   - Verify Groovy syntax
+### 1. Security First
 
-3. **Missing plugins**:
-   - Install required plugins via Jenkins plugin manager
+Never hardcode secrets:
 
-## 🤝 Contributing
+```groovy
+// ❌ BAD - Hardcoded credentials
+def apiKey = "sk-1234567890abcdef"
 
-Contributions are welcome! To contribute:
+// ✅ GOOD - Use environment variables
+def apiKey = env('API_KEY')
 
-1. Fork the project
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
+// ✅ GOOD - Use Jenkins Credentials Binding
+credentials(id: 'my-api-key') {
+    def apikey = it.stringValue
+}
+```
 
-## 📋 TODO
+### 2. Fail Fast
 
-- [ ] Add pipelines for different programming languages
-- [ ] Integrate Slack/Teams notifications
-- [ ] Add Docker deployment examples
-- [ ] Create pipeline templates
+Validate early and fail immediately:
 
-## 📄 License
+```groovy
+validateEnvironment()
+checkDatabaseConnection()
+```
 
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+### 3. Idempotent Deployments
 
-## 👨‍💻 Author
+Ensure deployments can be repeated safely:
 
-**A&ECoding** - [@iwebbo](https://github.com/iwebbo)
+```groovy
+sh '''
+    ./gradlew deploy --no-daemon --dry-run
+'''
+```
 
-## 🆘 Support
+### 4. Resource Management
 
-If you have questions or encounter issues:
+Set appropriate limits and timeouts:
 
-1. Check the [official Jenkins documentation](https://www.jenkins.io/doc/)
-2. Open an issue on this repository
-3. Contact me via GitHub
+```groovy
+options {
+    timeout(time: 2, unit: 'HOURS')
+    buildDiscarder(logRotator(numToKeepStr: '10'))
+}
+```
 
-## 📊 Useful Resources
+### 5. Parallel Execution
 
-- [Jenkins Pipeline Documentation](https://www.jenkins.io/doc/book/pipeline/)
-- [Pipeline Syntax](https://www.jenkins.io/doc/book/pipeline/syntax/)
-- [Jenkins Best Practices](https://www.jenkins.io/doc/book/pipeline/pipeline-best-practices/)
+Run independent stages in parallel:
+
+```groovy
+stages {
+    stage('Unit Tests') {
+        steps { sh '''./gradlew test --no-daemon''' }
+    }
+    
+    stage('Integration Tests') {
+        steps { sh '''./gradlew integrationTest --no-daemon''' }
+    }
+}
+
+parallel {
+    stage('Frontend Build') {
+        steps { sh '''npm run build --no-daemon''' }
+    }
+    
+    stage('Backend Build') {
+        steps { sh '''mvn clean package --no-daemon''' }
+    }
+}
+```
+
+## Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| Shared library not found | Verify library URL in System Configuration |
+| Credentials error | Check credentials are configured and accessible |
+| Timeout errors | Increase timeout or optimize build steps |
+| Permission denied | Ensure proper Jenkins user permissions |
+
+## License
+
+MIT License - Feel free to use, modify, and distribute.
 
 ---
 
-⭐ **Don't forget to star the project if you find it useful!**
+*Generated by Senior DevOps Engineer Template System v1.0*
